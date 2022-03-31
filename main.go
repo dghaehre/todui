@@ -16,12 +16,15 @@ import (
 
 // Keys
 type keyMap struct {
-	Up    key.Binding
-	Down  key.Binding
-	Left  key.Binding
-	Right key.Binding
-	Help  key.Binding
-	Quit  key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Left     key.Binding
+	Right    key.Binding
+	NextPage key.Binding
+	PrevPage key.Binding
+	New      key.Binding
+	Help     key.Binding
+	Quit     key.Binding
 }
 
 type InputMode = string
@@ -32,6 +35,7 @@ type Page = uint8
 const (
 	allTasksPage Page = iota
 	projectsPage
+	inboxPage
 )
 
 var (
@@ -58,6 +62,18 @@ var (
 			key.WithKeys("right", "l"),
 			key.WithHelp("→/l", "right"),
 		),
+		NextPage: key.NewBinding(
+			key.WithKeys("]"),
+			key.WithHelp("]", "next page"),
+		),
+		PrevPage: key.NewBinding(
+			key.WithKeys("["),
+			key.WithHelp("[", "previous page"),
+		),
+		New: key.NewBinding(
+			key.WithKeys("n"),
+			key.WithHelp("n", "new"),
+		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),
 			key.WithHelp("?", "help"),
@@ -75,11 +91,11 @@ var (
 
 	chosenTextStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("3"))
-)
 
-type Todo struct {
-	desc string
-}
+	projectStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("5"))
+
+)
 
 type cursorPosition struct {
 	view  View
@@ -87,20 +103,17 @@ type cursorPosition struct {
 }
 
 type model struct {
-	keys        keyMap
-	inputMode   InputMode
-	mode        Mode
-	totalWidth  int
-	totalHeight int
-	debug       bool
-	todos       []Todo
-	cursor      cursorPosition
-	page        Page
-}
-
-var mockTodos []Todo = []Todo{
-	{desc: "a test"},
-	{desc: "another test"},
+	keys           keyMap
+	inputMode      InputMode
+	mode           Mode
+	totalWidth     int
+	totalHeight    int
+	debug          bool
+	todos          []Todo
+	storage        Storage
+	cursor         cursorPosition
+	page           Page
+	currentProject string
 }
 
 func NewModel(debug bool) model {
@@ -114,7 +127,7 @@ func NewModel(debug bool) model {
 			view:  defaultView,
 			index: 0,
 		},
-		todos: mockTodos,
+		storage: NewStorage(),
 	}
 }
 
@@ -139,7 +152,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, m.keys.Down), key.Matches(msg, m.keys.Up):
 			m.moveCursor(msg)
-		case key.Matches(msg, m.keys.Left), key.Matches(msg, m.keys.Right):
+		case key.Matches(msg, m.keys.PrevPage), key.Matches(msg, m.keys.NextPage):
 			m.changePage(msg)
 		case key.Matches(msg, m.keys.Help):
 			return m, tea.Quit
@@ -156,7 +169,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	top := m.topBar()
-	content := m.defaultList()
+	content := m.getMainList()
 	return m.debugView() + top + content + m.getEmptyLines(content+top) + m.bottomBar()
 }
 
@@ -164,12 +177,23 @@ func (m model) debugView() string {
 	if !m.debug {
 		return ""
 	}
-	content := fmt.Sprintf("STATE: Height: %d, Width: %d, InputMode: %+v, Mode: %+v, Cursor: %+v, Page: %+v",
-		m.totalHeight, m.totalWidth, m.inputMode, m.mode, m.cursor, m.page)
+	content := fmt.Sprintf("STATE: Height: %d, Width: %d, InputMode: %+v, Mode: %+v, Cursor: %+v, Page: %+v, Project: %+v",
+		m.totalHeight, m.totalWidth, m.inputMode, m.mode, m.cursor, m.page, m.currentProject)
 	style := lipgloss.NewStyle().
 		Width(m.totalWidth).
 		Align(lipgloss.Right)
 	return style.Render(content) + "\n"
+}
+
+func (m model) getMainList() string {
+	switch m.page {
+	case projectsPage:
+		return m.projectsList()
+	case allTasksPage:
+		return m.defaultList()
+	default:
+		return ""
+	}
 }
 
 func (m model) topBar() string {
@@ -180,21 +204,21 @@ func (m model) topBar() string {
 
 	var s string
 
-	// all tasks
 	if m.page == allTasksPage {
-		s += chosenTextStyle.Render("by task")
+		s += chosenTextStyle.Render("All tasks")
 	} else {
-		s += dimTextStyle.Render("by task")
+		s += dimTextStyle.Render("All tasks")
 	}
 
 	s += " | "
 
 	// projects
 	if m.page == projectsPage {
-		s += chosenTextStyle.Render("projects")
+		s += chosenTextStyle.Render("By project")
 	} else {
-		s += dimTextStyle.Render("projects")
+		s += dimTextStyle.Render("By project")
 	}
+
 	return style.Render(s) + "\n" + "\n"
 }
 
@@ -223,11 +247,38 @@ func (m model) defaultList() string {
 		Width(m.totalWidth).
 		Align(lipgloss.Left)
 
-	for i, v := range m.todos {
+	for i, v := range m.storage.getPendingTodos(m.currentProject) {
 		if m.cursor.index == i {
-			content += "→ " + defaultTextStyle.Render(v.desc)
+			content += "→ " + v.renderInList()
 		} else {
-			content += "  " + defaultTextStyle.Render(v.desc)
+			content += "  " + v.renderInList()
+		}
+		content += "\n"
+	}
+	return style.Render(content)
+}
+
+func (t Todo) renderInList() string {
+	desc := defaultTextStyle.Render(t.desc)
+	project := ""
+	if t.project.Name != "" {
+		project = projectStyle.Render("#" + t.project.Name)
+	}
+	return desc + " " + project
+}
+
+func (m model) projectsList() string {
+	// We currently assume that the cursor position has view default
+	content := ""
+	style := lipgloss.NewStyle().
+		Width(m.totalWidth).
+		Align(lipgloss.Left)
+
+	for i, p := range m.storage.getPendingProjects() {
+		if m.cursor.index == i {
+			content += "→ " + projectStyle.Render(p.Name)
+		} else {
+			content += "  " + projectStyle.Render(p.Name)
 		}
 		content += "\n"
 	}
@@ -242,7 +293,7 @@ func (m model) defaultList() string {
 func (m model) getValidKeys(k keyMap) []key.Binding {
 	switch m.mode {
 	case defaultMode:
-		return []key.Binding{k.Up, k.Down, k.Help, k.Quit}
+		return []key.Binding{k.New, k.Up, k.Down, k.PrevPage, k.NextPage, k.Help, k.Quit}
 	}
 	return []key.Binding{k.Quit} // Cannot and should not happen
 }
@@ -263,15 +314,24 @@ func (m model) getEmptyLines(content string) string {
 
 func (m *model) changePage(km tea.KeyMsg) {
 	switch {
-	case key.Matches(km, m.keys.Left):
+	case key.Matches(km, m.keys.PrevPage):
+		if m.page <= 1 {
+			m.currentProject = ""
+		}
 		if m.page > 0 {
 			m.page--
 		}
-	case key.Matches(km, m.keys.Right):
-		if !(m.page == 1) {
+	case key.Matches(km, m.keys.NextPage):
+		if m.page == 0 {
+			m.setCurrentProject()
 			m.page++
 		}
 	}
+}
+
+// TODO: fiks
+func (m *model) setCurrentProject() {
+	m.currentProject = m.storage.getTodoProject(m.cursor.index)
 }
 
 func (m *model) moveCursor(km tea.KeyMsg) {
