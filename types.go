@@ -1,8 +1,4 @@
-package main 
-
-
-
-
+package main
 
 // Todoist project:
 //     "id": 220474322,
@@ -16,15 +12,18 @@ package main
 //     "inbox_project": true,
 //     "url": "https://todoist.com/showProject?id=220474322"
 // }
+
 type Project struct {
-	Id           int
-	Name         string
-	CommentCount int
-	Order        int
-	Color        int
-	Shared       bool
-	InboxProject bool
-	Url          string
+	Id           int    `json:"id"`
+	Name         string `json:"name"`
+	CommentCount int    `json:"comment_count"`
+	Order        int    `json:"order"`
+	Color        int    `json:"color"`
+	Shared       bool   `json:"shared"`
+	SyncId       int    `json:"sync_id"`
+	Favorite     bool   `json:"favorite"`
+	InboxProject bool   `json:"inbox_project"`
+	Url          string `json:"url"`
 }
 
 type Todo struct {
@@ -34,10 +33,10 @@ type Todo struct {
 }
 
 type Storage struct {
-	pendingTodos   []Todo
-	completedTodos []Todo
-  pendingProjects []Project
+	pendingTodos     []Todo
+	completedTodos   []Todo
+	pendingProjects  []Project
+	completedProject []Project
 }
-
 
 // TODO: create interfaces that is needed to sync a project and/or a todo
