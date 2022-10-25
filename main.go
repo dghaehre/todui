@@ -18,37 +18,43 @@ import (
 
 // Keys
 type keyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Left     key.Binding
-	Right    key.Binding
-	NextPage key.Binding
-	PrevPage key.Binding
-	New      key.Binding
-	Sync     key.Binding
-	Help     key.Binding
-	Quit     key.Binding
+	Up           key.Binding
+	Down         key.Binding
+	Left         key.Binding
+	Right        key.Binding
+	AllTasksTab  key.Binding
+	CompletedTab key.Binding
+	Filter       key.Binding
+	New          key.Binding
+	Sync         key.Binding
+	Help         key.Binding
+	Quit         key.Binding
 }
 
 type InputMode = string
+type InputFieldCommand = string
+type Command = string
 type Mode = string
 type View = string
-type Page = int
+type Tab = int
 
 const (
-	inboxPage Page = iota
-	todayPage
-	projectsPage
-	allTasksPage
+	allTasksTab Tab = iota
+	completedTab
 
 	// NOTE: make sure to increment counter if we add a new page
-	totalPages = 4
+	totalTab = 2
 )
 
 var (
 	insertInputMode InputMode = "insert"
 	normalInputMode InputMode = "normal"
 	defaultMode     Mode      = "default"
+
+	inputFieldCommandNew    InputFieldCommand = "new"
+	inputFieldCommandFilter InputFieldCommand = "filter"
+
+	fetchedTodos Command = "fetchedTodos"
 
 	defaultView View = "default"
 
@@ -69,13 +75,17 @@ var (
 			key.WithKeys("right", "l"),
 			key.WithHelp("→/l", "right"),
 		),
-		NextPage: key.NewBinding(
-			key.WithKeys("]"),
-			key.WithHelp("]", "tab right"),
+		Filter: key.NewBinding(
+			key.WithKeys("/"),
+			key.WithHelp("/", "Update filter"),
 		),
-		PrevPage: key.NewBinding(
-			key.WithKeys("["),
-			key.WithHelp("[", "tab left"),
+		AllTasksTab: key.NewBinding(
+			key.WithKeys("1"),
+			key.WithHelp("1", "All tasks tab"),
+		),
+		CompletedTab: key.NewBinding(
+			key.WithKeys("2"),
+			key.WithHelp("2", "Completed tab"),
 		),
 		New: key.NewBinding(
 			key.WithKeys("n"),
@@ -107,13 +117,17 @@ var (
 			Foreground(lipgloss.Color("5"))
 )
 
+type FetchedTodos struct {
+	data []Todo
+}
+
 type cursorPosition struct {
 	view  View
 	index int
 }
 
 type inputField struct {
-	command string // TODO: enum
+	command InputFieldCommand
 	content string
 	enabled bool
 }
@@ -127,9 +141,11 @@ type model struct {
 	debug          bool
 	sync           bool
 	todos          []Todo
+	todosInView    []Todo
 	storage        Storage
 	cursor         cursorPosition
-	page           Page
+	tab            Tab
+	currentFilter  string
 	showHelp       bool
 	currentProject string
 	textInput      textinput.Model
@@ -147,7 +163,7 @@ func NewModel(debug bool) model {
 		mode:      defaultMode,
 		inputMode: normalInputMode,
 		debug:     debug,
-		page:      inboxPage,
+		tab:       allTasksTab,
 		textInput: ti,
 		cursor: cursorPosition{
 			view:  defaultView,
@@ -158,7 +174,14 @@ func NewModel(debug bool) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return m.fetchTodos
+}
+
+func (m model) fetchTodos() tea.Msg {
+	todos := m.storage.getPendingTodos("")
+	return FetchedTodos{
+		data: todos,
+	}
 }
 
 /////////////
@@ -167,6 +190,11 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+
+	case FetchedTodos:
+		m.todos = msg.data
+		m.todosInView = filterContents(msg.data, m.currentFilter)
+		return m, nil
 
 	// Set window size
 	case tea.WindowSizeMsg:
@@ -182,6 +210,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// TODO: handle
 			case "enter":
+				m.currentFilter = m.textInput.Value()
 				m.textInput.SetValue("")
 				m.textInput.Prompt = ""
 				m.inputField.enabled = false
@@ -190,12 +219,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textInput.SetValue("")
 				m.textInput.Prompt = ""
 				m.inputField.enabled = false
+
+				// Delete current filter
+				m.todosInView = m.todos
+				m.currentFilter = ""
 				return m, nil
 			}
 		}
 		// Handle text input..
 		var cmd tea.Cmd
 		m.textInput, cmd = m.textInput.Update(msg)
+
+		if m.inputField.command == inputFieldCommandFilter {
+			m.todosInView = filterContents(m.todos, m.textInput.Value())
+		}
+
 		return m, cmd
 	}
 
@@ -204,10 +242,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, m.keys.Down), key.Matches(msg, m.keys.Up):
 			m.moveCursor(msg)
-		case key.Matches(msg, m.keys.PrevPage), key.Matches(msg, m.keys.NextPage):
-			m.changePage(msg)
+		case key.Matches(msg, m.keys.AllTasksTab), key.Matches(msg, m.keys.CompletedTab):
+			m.changeTab(msg)
 		case key.Matches(msg, m.keys.Help):
 			m.showHelp = !m.showHelp
+			return m, nil
+		case key.Matches(msg, m.keys.Filter):
+			m.textInput.Focus()
+			m.textInput.SetValue(m.currentFilter)
+			m.textInput.Placeholder = ""
+			// m.textInput.TextStyle = defaultTextStyle
+			m.textInput.Prompt = "/"
+			m.inputField.enabled = true
+			m.inputField.command = inputFieldCommandFilter
 			return m, nil
 		case key.Matches(msg, m.keys.New):
 			m.textInput.Focus()
@@ -215,12 +262,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.textInput.Placeholder = ""
 			m.textInput.Prompt = "new task: "
 			m.inputField.enabled = true
-			m.inputField.command = "new"
+			m.inputField.command = inputFieldCommandNew
 			return m, nil
 		case key.Matches(msg, m.keys.Sync):
 			m.sync = true
 			return m, nil
-			// m.changePage(msg)
+			// m.changeTab(msg)
 		case key.Matches(msg, m.keys.Help):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Quit):
@@ -244,8 +291,8 @@ func (m model) debugView() string {
 	if !m.debug {
 		return ""
 	}
-	content := fmt.Sprintf("STATE: Height: %d, Width: %d, InputMode: %+v, Mode: %+v, Cursor: %+v, Page: %+v, Project: %+v",
-		m.totalHeight, m.totalWidth, m.inputMode, m.mode, m.cursor, m.page, m.currentProject)
+	content := fmt.Sprintf("Height: %d, Width: %d, InputMode: %+v, Mode: %+v, Cursor: %+v, Tab: %+v, Project: %+v, todos: %d, todosInView: %d",
+		m.totalHeight, m.totalWidth, m.inputMode, m.mode, m.cursor, m.tab, m.currentProject, len(m.todos), len(m.todosInView))
 	style := lipgloss.NewStyle().
 		Width(m.totalWidth).
 		Align(lipgloss.Right)
@@ -253,30 +300,20 @@ func (m model) debugView() string {
 }
 
 func (m model) getMainList() string {
-	switch m.page {
-	case projectsPage:
-		return m.projectsList()
-	case inboxPage:
-		return m.defaultList()
-	case todayPage:
-		return m.defaultList()
-	case allTasksPage:
+	switch m.tab {
+	case allTasksTab:
 		return m.defaultList()
 	default:
-		return ""
+		return "TODO"
 	}
 }
 
-func pageToString(p Page) string {
+func tabToString(p Tab) string {
 	switch p {
-	case projectsPage:
-		return "Projects"
-	case inboxPage:
-		return "INBOX"
-	case todayPage:
-		return "Today"
-	case allTasksPage:
-		return "All Tasks"
+	case completedTab:
+		return "Completed tasks"
+	case allTasksTab:
+		return "All tasks"
 	}
 	return ""
 }
@@ -289,14 +326,14 @@ func (m model) topBar() string {
 	var s string
 	s += "  "
 
-	for i := 0; i < totalPages; i++ {
-		if m.page == i {
-			s += chosenTextStyle.Render(pageToString(i))
+	for i := 0; i < totalTab; i++ {
+		if m.tab == i {
+			s += chosenTextStyle.Render(tabToString(i))
 		} else {
-			s += dimTextStyle.Render(pageToString(i))
+			s += dimTextStyle.Render(tabToString(i))
 		}
 
-		if i != (totalPages - 1) {
+		if i != (totalTab - 1) {
 			s += " | "
 		}
 	}
@@ -309,7 +346,14 @@ func (m model) bottomBar() string {
 		inputStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("3")).
 			Align(lipgloss.Left)
-		input = inputStyle.Render(m.textInput.View())
+		filterStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("15")).
+			Align(lipgloss.Left)
+		if m.inputField.command == inputFieldCommandFilter {
+			input = filterStyle.Render(m.textInput.View())
+		} else {
+			input = inputStyle.Render(m.textInput.View())
+		}
 	}
 	w, _ := lipgloss.Size(input)
 
@@ -328,6 +372,12 @@ func (m model) bottomBar() string {
 				s += "   "
 			}
 		}
+	} else {
+		h := m.keys.Help.Help()
+		s += h.Key + ": " + h.Desc
+		s += "   "
+		q := m.keys.Quit.Help()
+		s += q.Key + ": " + q.Desc
 	}
 	return input + style.Render(s)
 }
@@ -339,7 +389,7 @@ func (m model) defaultList() string {
 		Width(m.totalWidth).
 		Align(lipgloss.Left)
 
-	for i, v := range m.storage.getPendingTodos(m.currentProject) {
+	for i, v := range m.todosInView {
 		if m.cursor.index == i {
 			content += "→ " + v.renderInList()
 		} else {
@@ -359,6 +409,7 @@ func (t Todo) renderInList() string {
 	return desc + " " + project
 }
 
+// TODO: remove
 func (m model) projectsList() string {
 	// We currently assume that the cursor position has view default
 	content := ""
@@ -385,7 +436,7 @@ func (m model) projectsList() string {
 func (m model) getValidKeys(k keyMap) []key.Binding {
 	switch m.mode {
 	case defaultMode:
-		return []key.Binding{k.Sync, k.New, k.Up, k.Down, k.PrevPage, k.NextPage, k.Help, k.Quit}
+		return []key.Binding{k.Sync, k.New, k.Filter, k.Up, k.Down, k.AllTasksTab, k.CompletedTab, k.Help, k.Quit}
 	}
 	return []key.Binding{k.Quit} // Cannot and should not happen
 }
@@ -404,23 +455,16 @@ func (m model) getEmptyLines(content string) string {
 	return s
 }
 
-func (m *model) changePage(km tea.KeyMsg) {
+func (m *model) changeTab(km tea.KeyMsg) {
 	switch {
-	case key.Matches(km, m.keys.PrevPage):
-		if m.page <= 1 {
-			m.currentProject = ""
-		}
-		if m.page > 0 {
-			m.page--
-		}
-	case key.Matches(km, m.keys.NextPage):
-		if m.page != (totalPages - 1) {
-			m.page++
-		}
+	case key.Matches(km, m.keys.AllTasksTab):
+		m.tab = 0
+	case key.Matches(km, m.keys.CompletedTab):
+		m.tab = 1
 	}
 }
 
-// TODO: fiks
+// TODO: remove
 // NOTE: hva gjør denne egentlig?
 func (m *model) setCurrentProject() {
 	m.currentProject = m.storage.getTodoProject(m.cursor.index)
@@ -434,7 +478,7 @@ func (m *model) moveCursor(km tea.KeyMsg) {
 		}
 	case key.Matches(km, m.keys.Down):
 		// TODO: change bottom pased on page
-		bottom := len(m.todos)
+		bottom := len(m.todosInView)
 		if !(m.cursor.index+1 == bottom) {
 			m.cursor.index++
 		}
