@@ -500,7 +500,6 @@ func (m *model) changeTab(km tea.KeyMsg) {
 }
 
 func (m *model) moveCursor(km tea.KeyMsg) {
-	// TODO: not actually bottom..
 	bottom := m.listHeight
 	if len(m.filteredTodos) < bottom {
 		bottom = len(m.filteredTodos) - 1
@@ -527,7 +526,6 @@ func (m *model) moveCursor(km tea.KeyMsg) {
 
 func main() {
 
-	// TODO: read debug flag
 	// TODO: only open "tui" app when no args are given
 	// TODO: create a sync command for completed tasks
 
