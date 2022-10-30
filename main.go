@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -25,16 +27,18 @@ type keyMap struct {
 	AllTasksTab  key.Binding
 	CompletedTab key.Binding
 	Filter       key.Binding
+	SetFilter    key.Binding
+	ClearFilter  key.Binding
+	ExitFilter   key.Binding
 	New          key.Binding
+	Edit         key.Binding
 	Sync         key.Binding
 	Help         key.Binding
 	Quit         key.Binding
 }
 
-type InputMode = string
 type InputFieldCommand = string
 type Command = string
-type Mode = string
 type View = string
 type Tab = int
 
@@ -47,16 +51,10 @@ const (
 )
 
 var (
-	insertInputMode InputMode = "insert"
-	normalInputMode InputMode = "normal"
-	defaultMode     Mode      = "default"
-
 	inputFieldCommandNew    InputFieldCommand = "new"
 	inputFieldCommandFilter InputFieldCommand = "filter"
 
 	fetchedTodos Command = "fetchedTodos"
-
-	defaultView View = "default"
 
 	keys = keyMap{
 		Up: key.NewBinding(
@@ -91,6 +89,22 @@ var (
 			key.WithKeys("n"),
 			key.WithHelp("n", "new"),
 		),
+		SetFilter: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "Set"),
+		),
+		ClearFilter: key.NewBinding(
+			key.WithKeys("ctrl+c"),
+			key.WithHelp("ctrl+c", "Clear"),
+		),
+		ExitFilter: key.NewBinding(
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "Exit"),
+		),
+		Edit: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "Edit"),
+		),
 		Sync: key.NewBinding(
 			key.WithKeys("s"),
 			key.WithHelp("s", "sync"),
@@ -100,12 +114,12 @@ var (
 			key.WithHelp("?", "toggle help"),
 		),
 		Quit: key.NewBinding(
-			key.WithKeys("q", "esc", "ctrl+c"),
+			key.WithKeys("q", "ctrl+c"),
 			key.WithHelp("q", "quit"),
 		)}
 
 	defaultTextStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("12"))
+				Foreground(lipgloss.Color("15"))
 
 	dimTextStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("8"))
@@ -114,12 +128,11 @@ var (
 			Foreground(lipgloss.Color("3"))
 
 	projectStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("14"))
+
+	labelsStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("5"))
 )
-
-type FetchedTodos struct {
-	data []Todo
-}
 
 type cursorPosition struct {
 	view  View
@@ -132,17 +145,19 @@ type inputField struct {
 	enabled bool
 }
 
+type editorFinishedMsg struct{ err error }
+
 type model struct {
+	// storage        Storage
+	api            API
 	keys           keyMap
-	inputMode      InputMode
-	mode           Mode
 	totalWidth     int
 	totalHeight    int
+	listHeight     int
 	debug          bool
 	sync           bool
 	todos          []Todo
-	todosInView    []Todo
-	storage        Storage
+	filteredTodos  []Todo
 	cursor         cursorPosition
 	tab            Tab
 	currentFilter  string
@@ -150,26 +165,24 @@ type model struct {
 	currentProject string
 	textInput      textinput.Model
 	inputField     inputField
+	syncError      error
 }
 
-func NewModel(debug bool) model {
+func NewModel(api API, debug bool) model {
 	ti := textinput.New()
 	ti.CharLimit = 156
 	ti.SetCursorMode(textinput.CursorStatic)
 	ti.Placeholder = ""
 	ti.Prompt = ""
 	return model{
+		api:       api,
 		keys:      keys,
-		mode:      defaultMode,
-		inputMode: normalInputMode,
 		debug:     debug,
 		tab:       allTasksTab,
 		textInput: ti,
 		cursor: cursorPosition{
-			view:  defaultView,
 			index: 0,
 		},
-		storage: NewStorage(),
 	}
 }
 
@@ -178,9 +191,14 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) fetchTodos() tea.Msg {
-	todos := m.storage.getPendingTodos("")
+	res, err := m.api.getPendingTodos(context.Background())
+	if err != nil {
+		return SyncError{
+			err: err,
+		}
+	}
 	return FetchedTodos{
-		data: todos,
+		data: toTodos(res.Items, res.Projects),
 	}
 }
 
@@ -188,18 +206,38 @@ func (m model) fetchTodos() tea.Msg {
 // Update
 ////////////
 
+func openEditor(m model) tea.Cmd {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vim"
+	}
+	path, err := createEditFile(m)
+	if err != nil {
+		return nil
+	}
+	c := exec.Command(editor, path)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return editorFinishedMsg{err}
+	})
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
+	case SyncError:
+		m.syncError = msg.err
+		return m, nil
+
 	case FetchedTodos:
 		m.todos = msg.data
-		m.todosInView = filterContents(msg.data, m.currentFilter)
+		m.filteredTodos = filterContents(msg.data, m.currentFilter)
 		return m, nil
 
 	// Set window size
 	case tea.WindowSizeMsg:
 		m.totalHeight = msg.Height
 		m.totalWidth = msg.Width
+		m.listHeight = 20
 		return m, nil
 	}
 
@@ -214,15 +252,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textInput.SetValue("")
 				m.textInput.Prompt = ""
 				m.inputField.enabled = false
+				m.moveCursor(tea.KeyMsg{})
 				return m, nil
-			case "ctrl+c":
+			case "ctrl+c", "esc": // TODO: use keys instead (keymatches)
 				m.textInput.SetValue("")
 				m.textInput.Prompt = ""
 				m.inputField.enabled = false
 
 				// Delete current filter
-				m.todosInView = m.todos
+				m.filteredTodos = m.todos
 				m.currentFilter = ""
+				m.moveCursor(tea.KeyMsg{})
 				return m, nil
 			}
 		}
@@ -231,15 +271,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textInput, cmd = m.textInput.Update(msg)
 
 		if m.inputField.command == inputFieldCommandFilter {
-			m.todosInView = filterContents(m.todos, m.textInput.Value())
+			m.filteredTodos = filterContents(m.todos, m.textInput.Value())
 		}
 
 		return m, cmd
 	}
 
+	// Normal list view
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
+		case key.Matches(msg, m.keys.Edit):
+			return m, openEditor(m)
 		case key.Matches(msg, m.keys.Down), key.Matches(msg, m.keys.Up):
 			m.moveCursor(msg)
 		case key.Matches(msg, m.keys.AllTasksTab), key.Matches(msg, m.keys.CompletedTab):
@@ -291,8 +334,8 @@ func (m model) debugView() string {
 	if !m.debug {
 		return ""
 	}
-	content := fmt.Sprintf("Height: %d, Width: %d, InputMode: %+v, Mode: %+v, Cursor: %+v, Tab: %+v, Project: %+v, todos: %d, todosInView: %d",
-		m.totalHeight, m.totalWidth, m.inputMode, m.mode, m.cursor, m.tab, m.currentProject, len(m.todos), len(m.todosInView))
+	content := fmt.Sprintf("h: %d, w: %d, Cursor: %+v, Tab: %+v, Project: %+v, todos: %d, filteredTodos: %d, syncError: %+v",
+		m.totalHeight, m.totalWidth, m.cursor, m.tab, m.currentProject, len(m.todos), len(m.filteredTodos), m.syncError)
 	style := lipgloss.NewStyle().
 		Width(m.totalWidth).
 		Align(lipgloss.Right)
@@ -302,7 +345,7 @@ func (m model) debugView() string {
 func (m model) getMainList() string {
 	switch m.tab {
 	case allTasksTab:
-		return m.defaultList()
+		return m.allTasksList()
 	default:
 		return "TODO"
 	}
@@ -363,69 +406,59 @@ func (m model) bottomBar() string {
 		Align(lipgloss.Right)
 
 	var s string
-	if m.showHelp {
-		ks := m.getValidKeys(m.keys)
-		for i, v := range ks {
-			h := v.Help()
-			s += h.Key + ": " + h.Desc
-			if (i + 1) != len(ks) {
-				s += "   "
-			}
-		}
-	} else {
-		h := m.keys.Help.Help()
+	ks := m.getValidKeys(m.keys)
+	for i, v := range ks {
+		h := v.Help()
 		s += h.Key + ": " + h.Desc
-		s += "   "
-		q := m.keys.Quit.Help()
-		s += q.Key + ": " + q.Desc
+		if (i + 1) != len(ks) {
+			s += "   "
+		}
 	}
 	return input + style.Render(s)
 }
 
-func (m model) defaultList() string {
+func (m model) allTasksList() string {
 	// We currently assume that the cursor position has view default
 	content := ""
 	style := lipgloss.NewStyle().
 		Width(m.totalWidth).
 		Align(lipgloss.Left)
 
-	for i, v := range m.todosInView {
+	for i, v := range m.filteredTodos {
 		if m.cursor.index == i {
-			content += "→ " + v.renderInList()
+			content += "→ " + v.renderInList(m.totalWidth)
 		} else {
-			content += "  " + v.renderInList()
+			content += "  " + v.renderInList(m.totalWidth)
 		}
 		content += "\n"
+		if i == m.listHeight {
+			break
+		}
 	}
 	return style.Render(content)
 }
 
-func (t Todo) renderInList() string {
-	desc := defaultTextStyle.Render(t.desc)
+func (t Todo) renderInList(w int) string {
+	desc := defaultTextStyle.Render(withSize(t.Content, w-50))
+
+	labels := ""
+	for _, l := range t.Labels {
+		labels += labelsStyle.Render(" @" + l)
+	}
+
+	// TODO: remove emojis
 	project := ""
-	if t.project.Name != "" {
-		project = projectStyle.Render("#" + t.project.Name)
+	if t.ProjectName != "" {
+		project = projectStyle.Render(" #" + t.ProjectName)
 	}
-	return desc + " " + project
-}
 
-// TODO: remove
-func (m model) projectsList() string {
-	// We currently assume that the cursor position has view default
-	content := ""
-	style := lipgloss.NewStyle().
-		Width(m.totalWidth).
-		Align(lipgloss.Left)
-
-	for i, p := range m.storage.getPendingProjects() {
-		if m.cursor.index == i {
-			content += "→ " + projectStyle.Render(p.Name)
-		} else {
-			content += "  " + projectStyle.Render(p.Name)
-		}
-		content += "\n"
+	children := ""
+	totalChildren := len(t.Children)
+	if totalChildren > 0 {
+		completedChildren := totalChildren // TODO
+		children += dimTextStyle.Render(fmt.Sprintf(" (%d/%d)", completedChildren, totalChildren))
 	}
-	return style.Render(content)
+	return desc + " " + project + labels + children
 }
 
 /////////////
@@ -434,11 +467,13 @@ func (m model) projectsList() string {
 
 // Returns the valid command keys to be used, based on current state
 func (m model) getValidKeys(k keyMap) []key.Binding {
-	switch m.mode {
-	case defaultMode:
+	if m.inputField.enabled {
+		return []key.Binding{k.SetFilter, k.ClearFilter, k.ExitFilter}
+	}
+	if m.showHelp {
 		return []key.Binding{k.Sync, k.New, k.Filter, k.Up, k.Down, k.AllTasksTab, k.CompletedTab, k.Help, k.Quit}
 	}
-	return []key.Binding{k.Quit} // Cannot and should not happen
+	return []key.Binding{k.Help, k.Quit}
 }
 
 func (m model) getEmptyLines(content string) string {
@@ -464,23 +499,24 @@ func (m *model) changeTab(km tea.KeyMsg) {
 	}
 }
 
-// TODO: remove
-// NOTE: hva gjør denne egentlig?
-func (m *model) setCurrentProject() {
-	m.currentProject = m.storage.getTodoProject(m.cursor.index)
-}
-
 func (m *model) moveCursor(km tea.KeyMsg) {
+	// TODO: not actually bottom..
+	bottom := m.listHeight
+	if len(m.filteredTodos) < bottom {
+		bottom = len(m.filteredTodos) - 1
+	}
 	switch {
 	case key.Matches(km, m.keys.Up):
 		if m.cursor.index > 0 {
 			m.cursor.index--
 		}
 	case key.Matches(km, m.keys.Down):
-		// TODO: change bottom pased on page
-		bottom := len(m.todosInView)
-		if !(m.cursor.index+1 == bottom) {
+		if !(m.cursor.index >= bottom) {
 			m.cursor.index++
+		}
+	default:
+		if m.cursor.index > bottom {
+			m.cursor.index = bottom
 		}
 	}
 }
@@ -496,14 +532,29 @@ func main() {
 	// TODO: create a sync command for completed tasks
 
 	var tokenPath string
-	flag.StringVar(&tokenPath, "t", "~/.todoist.token", "Path to todoist API token.")
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Print(err)
+		os.Exit(1)
+	}
+	defaultTokenPath := homeDir + "/.todoist.token"
+	flag.StringVar(&tokenPath, "t", defaultTokenPath, "Path to todoist API token.")
+
 	var dbPath string
 	flag.StringVar(&dbPath, "d", "~/.cache/todui.db", "Path to local db.")
+
+	debug := flag.Bool("debug", false, "Run tui in debug mode")
+
 	sync := flag.Bool("sync", false, "do a full sync to local db")
+
 	flag.Parse()
 
 	// db, err := newDB()
-	// api := newAPI()
+	api, err := NewAPI(tokenPath)
+	if err != nil {
+		fmt.Print(err)
+		os.Exit(1)
+	}
 
 	if *sync == true {
 		// run sync command
@@ -511,7 +562,7 @@ func main() {
 		return
 	}
 
-	model := NewModel(true)
+	model := NewModel(api, *debug)
 
 	// Launch tui
 	p := tea.NewProgram(model)

@@ -1,42 +1,67 @@
 package main
 
-// Todoist project:
-//     "id": 220474322,
-//     "name": "Inbox",
-//     "comment_count": 10,
-//     "order": 1,
-//     "color": 47,
-//     "shared": false,
-//     "sync_id": 0,
-//     "favorite": false,
-//     "inbox_project": true,
-//     "url": "https://todoist.com/showProject?id=220474322"
-// }
+type FetchedTodos struct {
+	data []Todo
+}
+
+type SyncError struct {
+	err error
+}
 
 type Project struct {
-	Id           int    `json:"id"`
+	Id           string `json:"id"`
 	Name         string `json:"name"`
 	CommentCount int    `json:"comment_count"`
 	Order        int    `json:"order"`
-	Color        int    `json:"color"`
+	Color        string `json:"color"`
 	Shared       bool   `json:"shared"`
-	SyncId       int    `json:"sync_id"`
+	SyncId       string `json:"sync_id"`
 	Favorite     bool   `json:"favorite"`
 	InboxProject bool   `json:"inbox_project"`
 	Url          string `json:"url"`
 }
 
 type Todo struct {
-	desc        string
-	projectName string
-	project     Project
+	Id          string
+	ProjectId   string
+	ProjectName string
+	Content     string
+	Description string
+	Priority    int
+	Labels      []string
+	Checked     bool
+	Children    []Todo
 }
 
-type Storage struct {
-	pendingTodos     []Todo
-	completedTodos   []Todo
-	pendingProjects  []Project
-	completedProject []Project
+type Item struct {
+	// Due         string   `json:"due,omitempty"`
+	Id          string   `json:"id"`
+	ProjectId   string   `json:"project_id"`
+	Content     string   `json:"content"`
+	Description string   `json:"description"`
+	Priority    int      `json:"priority"`
+	ParentId    string   `json:"parent_id"`
+	Labels      []string `json:"labels"`
+	Checked     bool     `json:"checked"`
 }
 
-// TODO: create interfaces that is needed to sync a project and/or a todo
+// "id": "2995104339",
+// "user_id": "2671355",
+// "project_id": "2203306141",
+// "content": "Buy Milk",
+// "description": "",
+// "priority": 1,
+// "due": null,
+// "parent_id": null,
+// "child_order": 1,
+// "section_id": null,
+// "day_order": -1,
+// "collapsed": false,
+// "labels": ["Food", "Shopping"],
+// "added_by_uid": "2671355",
+// "assigned_by_uid": "2671355",
+// "responsible_uid": null,
+// "checked": false,
+// "is_deleted": false,
+// "sync_id": null,
+// "added_at": "2014-09-26T08:25:05.000000Z"
