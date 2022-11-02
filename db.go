@@ -2,10 +2,7 @@ package main
 
 import (
 	"database/sql"
-	"errors"
 	_ "github.com/mattn/go-sqlite3"
-	"io/ioutil"
-	"os"
 )
 
 type DB struct {
@@ -14,16 +11,6 @@ type DB struct {
 
 func (db DB) Close() error {
 	return db.conn.Close()
-}
-
-func creatFileIfNotExist(path string) error {
-	_, err := os.Stat(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return ioutil.WriteFile(path, []byte(""), 0644)
-		}
-	}
-	return err
 }
 
 func NewDB(path string) (DB, error) {

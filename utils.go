@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"strings"
 )
 
@@ -14,6 +16,16 @@ func Contains[T comparable](list []T, x T) bool {
 		}
 	}
 	return false
+}
+
+func creatFileIfNotExist(path string) error {
+	_, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ioutil.WriteFile(path, []byte(""), 0644)
+		}
+	}
+	return err
 }
 
 type Filter struct {
