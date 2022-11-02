@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -75,7 +74,7 @@ var (
 		),
 		Filter: key.NewBinding(
 			key.WithKeys("/"),
-			key.WithHelp("/", "Update filter"),
+			key.WithHelp("/", "filter"),
 		),
 		AllTasksTab: key.NewBinding(
 			key.WithKeys("1"),
@@ -83,7 +82,7 @@ var (
 		),
 		CompletedTab: key.NewBinding(
 			key.WithKeys("2"),
-			key.WithHelp("2", "Completed tab"),
+			key.WithHelp("2", "completed tab"),
 		),
 		New: key.NewBinding(
 			key.WithKeys("n"),
@@ -91,19 +90,19 @@ var (
 		),
 		SetFilter: key.NewBinding(
 			key.WithKeys("enter"),
-			key.WithHelp("enter", "Set"),
+			key.WithHelp("enter", "set"),
 		),
 		ClearFilter: key.NewBinding(
 			key.WithKeys("ctrl+c"),
-			key.WithHelp("ctrl+c", "Clear"),
+			key.WithHelp("ctrl+c", "clear"),
 		),
 		ExitFilter: key.NewBinding(
 			key.WithKeys("esc"),
-			key.WithHelp("esc", "Exit"),
+			key.WithHelp("esc", "exit"),
 		),
 		Edit: key.NewBinding(
 			key.WithKeys("e"),
-			key.WithHelp("e", "Edit"),
+			key.WithHelp("e", "edit"),
 		),
 		Sync: key.NewBinding(
 			key.WithKeys("s"),
@@ -148,8 +147,7 @@ type inputField struct {
 type editorFinishedMsg struct{ err error }
 
 type model struct {
-	// storage        Storage
-	api            API
+	storage        Storage
 	keys           keyMap
 	totalWidth     int
 	totalHeight    int
@@ -168,14 +166,14 @@ type model struct {
 	syncError      error
 }
 
-func NewModel(api API, debug bool) model {
+func NewModel(storage Storage, debug bool) model {
 	ti := textinput.New()
 	ti.CharLimit = 156
 	ti.SetCursorMode(textinput.CursorStatic)
 	ti.Placeholder = ""
 	ti.Prompt = ""
 	return model{
-		api:       api,
+		storage:   storage,
 		keys:      keys,
 		debug:     debug,
 		tab:       allTasksTab,
@@ -190,15 +188,29 @@ func (m model) Init() tea.Cmd {
 	return m.fetchTodos
 }
 
-func (m model) fetchTodos() tea.Msg {
-	res, err := m.api.getPendingTodos(context.Background())
+func (m model) getLocalTodos() tea.Msg {
+	// TODO: use context with timeout
+	res, err := m.storage.localTodos()
 	if err != nil {
-		return SyncError{
+		return SyncError{ // TODO: new error
+			err: err,
+		}
+	}
+	return LocalTodos{
+		data: res,
+	}
+}
+
+func (m model) fetchTodos() tea.Msg {
+	// res, err := m.api.getPendingTodos(context.Background())
+	todos, err := m.storage.fetchTodos()
+	if err != nil {
+		return SyncError{ // TODO: new error
 			err: err,
 		}
 	}
 	return FetchedTodos{
-		data: toTodos(res.Items, res.Projects),
+		data: todos,
 	}
 }
 
@@ -227,6 +239,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SyncError:
 		m.syncError = msg.err
 		return m, nil
+
+	case LocalTodos:
+		m.todos = msg.data
+		m.filteredTodos = filterContents(msg.data, m.currentFilter)
+		return m, m.fetchTodos
 
 	case FetchedTodos:
 		m.todos = msg.data
@@ -362,9 +379,13 @@ func tabToString(p Tab) string {
 }
 
 func (m model) topBar() string {
-	style := lipgloss.NewStyle().
-		Width(m.totalWidth).
+	tabStyle := lipgloss.NewStyle().
 		Align(lipgloss.Left)
+	errorStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("1")).
+		Align(lipgloss.Right)
+	pageStyle := lipgloss.NewStyle().
+		Width(m.totalWidth)
 
 	var s string
 	s += "  "
@@ -380,7 +401,14 @@ func (m model) topBar() string {
 			s += " | "
 		}
 	}
-	return style.Render(s) + "\n" + "\n"
+
+	var e string
+	if m.syncError != nil {
+		e += fmt.Sprintf("%s", m.syncError)
+	}
+
+	content := tabStyle.Render(s) + errorStyle.Render(e)
+	return pageStyle.Render(content) + "\n" + "\n"
 }
 
 func (m model) bottomBar() string {
@@ -539,7 +567,7 @@ func main() {
 	flag.StringVar(&tokenPath, "t", defaultTokenPath, "Path to todoist API token.")
 
 	var dbPath string
-	flag.StringVar(&dbPath, "d", "~/.cache/todui.db", "Path to local db.")
+	flag.StringVar(&dbPath, "d", homeDir+"/.cache/todui.db", "Path to local db.")
 
 	debug := flag.Bool("debug", false, "Run tui in debug mode")
 
@@ -547,11 +575,22 @@ func main() {
 
 	flag.Parse()
 
-	// db, err := newDB()
+	db, err := NewDB(dbPath)
+	if err != nil {
+		fmt.Print(err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
 	api, err := NewAPI(tokenPath)
 	if err != nil {
 		fmt.Print(err)
 		os.Exit(1)
+	}
+
+	storage := Storage{
+		api: api,
+		db:  db,
 	}
 
 	if *sync == true {
@@ -560,9 +599,8 @@ func main() {
 		return
 	}
 
-	model := NewModel(api, *debug)
+	model := NewModel(storage, *debug)
 
-	// Launch tui
 	p := tea.NewProgram(model)
 	if err := p.Start(); err != nil {
 		fmt.Println(err)

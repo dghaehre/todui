@@ -4,6 +4,10 @@ type FetchedTodos struct {
 	data []Todo
 }
 
+type LocalTodos struct {
+	data []Todo
+}
+
 type SyncError struct {
 	err error
 }
