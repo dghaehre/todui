@@ -15,11 +15,6 @@ type API struct {
 	client http.Client
 }
 
-type SyncResponse struct {
-	Projects []Project `json:"projects"`
-	Items    []Item    `json:"items"`
-}
-
 func NewAPI(tokenPath string) (API, error) {
 	t, err := ioutil.ReadFile(tokenPath)
 	if err != nil {
@@ -31,10 +26,10 @@ func NewAPI(tokenPath string) (API, error) {
 	}, nil
 }
 
-func (api API) getPendingTodos(ctx context.Context) (SyncResponse, error) {
+func (api API) getPending(ctx context.Context, token string) (SyncResponse, error) {
 	var syncResponse SyncResponse
 	values := url.Values{
-		"sync_token":     {"*"},
+		"sync_token":     {token},
 		"resource_types": {"[\"items\", \"projects\"]"},
 	}
 	s := values.Encode()

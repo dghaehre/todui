@@ -147,23 +147,22 @@ type inputField struct {
 type editorFinishedMsg struct{ err error }
 
 type model struct {
-	storage        Storage
-	keys           keyMap
-	totalWidth     int
-	totalHeight    int
-	listHeight     int
-	debug          bool
-	sync           bool
-	todos          []Todo
-	filteredTodos  []Todo
-	cursor         cursorPosition
-	tab            Tab
-	currentFilter  string
-	showHelp       bool
-	currentProject string
-	textInput      textinput.Model
-	inputField     inputField
-	syncError      error
+	storage       Storage
+	keys          keyMap
+	totalWidth    int
+	totalHeight   int
+	listHeight    int
+	debug         bool
+	sync          bool
+	todos         []Todo
+	filteredTodos []Todo
+	cursor        cursorPosition
+	tab           Tab
+	currentFilter string
+	showHelp      bool
+	textInput     textinput.Model
+	inputField    inputField
+	syncError     error
 }
 
 func NewModel(storage Storage, debug bool) model {
@@ -185,11 +184,10 @@ func NewModel(storage Storage, debug bool) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return m.fetchTodos
+	return m.getLocalTodos
 }
 
 func (m model) getLocalTodos() tea.Msg {
-	// TODO: use context with timeout
 	res, err := m.storage.localTodos()
 	if err != nil {
 		return SyncError{ // TODO: new error
@@ -202,7 +200,6 @@ func (m model) getLocalTodos() tea.Msg {
 }
 
 func (m model) fetchTodos() tea.Msg {
-	// res, err := m.api.getPendingTodos(context.Background())
 	todos, err := m.storage.fetchTodos()
 	if err != nil {
 		return SyncError{ // TODO: new error
@@ -351,8 +348,8 @@ func (m model) debugView() string {
 	if !m.debug {
 		return ""
 	}
-	content := fmt.Sprintf("h: %d, w: %d, Cursor: %+v, Tab: %+v, Project: %+v, todos: %d, filteredTodos: %d, syncError: %+v",
-		m.totalHeight, m.totalWidth, m.cursor, m.tab, m.currentProject, len(m.todos), len(m.filteredTodos), m.syncError)
+	content := fmt.Sprintf("h: %d, w: %d, Cursor: %+v, Tab: %+v, todos: %d, filteredTodos: %d, syncError: %+v",
+		m.totalHeight, m.totalWidth, m.cursor, m.tab, len(m.todos), len(m.filteredTodos), m.syncError)
 	style := lipgloss.NewStyle().
 		Width(m.totalWidth).
 		Align(lipgloss.Right)
@@ -379,17 +376,11 @@ func tabToString(p Tab) string {
 }
 
 func (m model) topBar() string {
-	tabStyle := lipgloss.NewStyle().
-		Align(lipgloss.Left)
-	errorStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("1")).
-		Align(lipgloss.Right)
 	pageStyle := lipgloss.NewStyle().
 		Width(m.totalWidth)
 
 	var s string
 	s += "  "
-
 	for i := 0; i < totalTab; i++ {
 		if m.tab == i {
 			s += chosenTextStyle.Render(tabToString(i))
@@ -402,13 +393,27 @@ func (m model) topBar() string {
 		}
 	}
 
+	tabStyle := lipgloss.NewStyle().
+		Height(2).
+		Width(m.totalWidth / 2).
+		Align(lipgloss.Left)
+
+	content := tabStyle.Render(s) + m.showError()
+	return pageStyle.Render(content) + "\n" + "\n"
+}
+
+// TODO: create a notifcation popup ish thing.
+func (m model) showError() string {
+	errorStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("1")).
+		Width(m.totalWidth / 3).
+		Height(1).
+		Align(lipgloss.Right)
 	var e string
 	if m.syncError != nil {
-		e += fmt.Sprintf("%s", m.syncError)
+		e += strings.TrimSpace(fmt.Sprintf("%s", m.syncError))
 	}
-
-	content := tabStyle.Render(s) + errorStyle.Render(e)
-	return pageStyle.Render(content) + "\n" + "\n"
+	return errorStyle.Render(e)
 }
 
 func (m model) bottomBar() string {

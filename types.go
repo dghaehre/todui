@@ -8,6 +8,12 @@ type LocalTodos struct {
 	data []Todo
 }
 
+// ^
+// Should probably rename these structs.
+// They currently work as following:
+// - LocalTodos will in the update function trigger fetchTodos
+// - FetchedTodos will not trigger any other function
+
 type SyncError struct {
 	err error
 }

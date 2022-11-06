@@ -76,7 +76,7 @@ func filterContents(list []Todo, filter string) []Todo {
 			}
 		}
 		for _, w := range f.content {
-			if strings.Contains(t.Content, w) {
+			if strings.Contains(strings.ToLower(t.Content), strings.ToLower(w)) {
 				newList = append(newList, t)
 				continue
 			}
@@ -152,10 +152,10 @@ func toTodos(items []Item, projects []Project) []Todo {
 		}
 	}
 	// What do we do if we have children left over..?
-
 	return todos
 }
 
+// in markdown
 func createEditFile(m model) (string, error) {
 	todo := m.filteredTodos[m.cursor.index]
 	path := fmt.Sprintf("/tmp/%s.md", todo.Id)
