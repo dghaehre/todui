@@ -59,3 +59,23 @@ func (s Storage) localTodos() ([]Todo, error) {
 	}
 	return toTodos(res.Items, res.Projects), nil
 }
+
+func (s Storage) newTask(todo Todo) ([]Todo, error) {
+	ctx, cancel := newContext()
+	defer cancel()
+	err := s.api.newTask(ctx, todo)
+	if err != nil {
+		return nil, err
+	}
+	return s.fetchTodos()
+}
+
+func (s Storage) quickAdd(content string) ([]Todo, error) {
+	ctx, cancel := newContext()
+	defer cancel()
+	err := s.api.quickAdd(ctx, content)
+	if err != nil {
+		return nil, err
+	}
+	return s.fetchTodos()
+}

@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
+	"time"
 )
 
 func Contains[T comparable](list []T, x T) bool {
@@ -165,4 +166,33 @@ func createEditFile(m model) (string, error) {
 	fmt.Fprintf(&b, "%s", todo.Description)
 	err := ioutil.WriteFile(path, b.Bytes(), 0644)
 	return path, err
+}
+
+func createNewTaskFile() (string, error) {
+	path := fmt.Sprintf("/tmp/%d.md", time.Now().Unix())
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "---")
+  fmt.Fprintf(&b, "labels: ")
+  fmt.Fprintf(&b, "project: Inbox")
+	fmt.Fprintf(&b, "---")
+	fmt.Fprintf(&b, "# ")
+	err := ioutil.WriteFile(path, b.Bytes(), 0644)
+	return path, err
+}
+
+// TODO
+func parseTaskFile(path string) (todo Todo, err error) {
+	b, err := ioutil.ReadFile(path)
+	if err != nil {
+		return todo, err
+	}
+	lines := strings.SplitN(string(b), "\n", 2)
+	todo.Content = strings.TrimPrefix(lines[0], "#")
+	if len(todo.Content) < 2 {
+		return todo, fmt.Errorf("parse error: could not parse header")
+	}
+	if len(lines) == 2 {
+		todo.Description = lines[1]
+	}
+	return todo, nil
 }

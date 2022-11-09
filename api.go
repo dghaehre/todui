@@ -48,3 +48,24 @@ func (api API) getPending(ctx context.Context, token string) (SyncResponse, erro
 	err = json.NewDecoder(res.Body).Decode(&syncResponse)
 	return syncResponse, err
 }
+func (api API) quickAdd(ctx context.Context, content string) error {
+	values := url.Values{
+		"text": {content},
+	}
+	s := values.Encode()
+	body := strings.NewReader(s)
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.todoist.com/sync/v9/quick/add", body)
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Authorization", "Bearer "+api.token)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	if res.StatusCode != 200 {
+		return fmt.Errorf("quickadd returned %d status code", res.StatusCode)
+	}
+	return nil
+}

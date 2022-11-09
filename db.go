@@ -159,7 +159,7 @@ func (db DB) getPending(ctx context.Context) (res PendingResponse, err error) {
 
 func (db DB) getPendingItems(ctx context.Context) ([]Item, error) {
 	var items = make([]Item, 0)
-	query := `select id, project_id, content, description, priority, parent_id from item`
+	query := `select id, project_id, content, description, priority, parent_id from item where checked = false`
 	rows, err := db.conn.QueryContext(ctx, query)
 	if err != nil {
 		return items, err

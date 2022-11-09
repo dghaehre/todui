@@ -8,6 +8,10 @@ type LocalTodos struct {
 	data []Todo
 }
 
+type NewTask struct {
+  data Todo
+}
+
 // ^
 // Should probably rename these structs.
 // They currently work as following:

@@ -1,9 +1,13 @@
 package main
 
 import (
-	"github.com/stretchr/testify/require"
+	"io/fs"
+	"io/ioutil"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -57,4 +61,36 @@ func TestToTodos(t *testing.T) {
 
 	todos := toTodos(items, projects)
 	require.Equal(t, 1, len(todos))
+}
+
+func TestParseTaskFile(t *testing.T) {
+	// Testing empty task
+	path, err := createNewTaskFile()
+	require.NoError(t, err)
+	_, err = parseTaskFile(path)
+	require.Equal(t, "parse error: could not parse header", err.Error())
+	err = os.Remove(path)
+	require.NoError(t, err)
+
+	// Test oneliner
+	path, err = createNewTaskFile()
+	require.NoError(t, err)
+	ioutil.WriteFile(path, []byte("this is a test"), fs.ModePerm)
+	todo, err := parseTaskFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "this is a test", todo.Content)
+	require.Equal(t, "", todo.Description)
+	err = os.Remove(path)
+	require.NoError(t, err)
+
+	// Test multiline
+	path, err = createNewTaskFile()
+	require.NoError(t, err)
+	ioutil.WriteFile(path, []byte("this is a test\ndescription\nhei"), fs.ModePerm)
+	todo, err = parseTaskFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "this is a test", todo.Content)
+	require.Equal(t, "description\nhei", todo.Description)
+	err = os.Remove(path)
+	require.NoError(t, err)
 }

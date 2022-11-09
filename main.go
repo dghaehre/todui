@@ -19,21 +19,23 @@ import (
 
 // Keys
 type keyMap struct {
-	Up           key.Binding
-	Down         key.Binding
-	Left         key.Binding
-	Right        key.Binding
-	AllTasksTab  key.Binding
-	CompletedTab key.Binding
-	Filter       key.Binding
-	SetFilter    key.Binding
-	ClearFilter  key.Binding
-	ExitFilter   key.Binding
-	New          key.Binding
-	Edit         key.Binding
-	Sync         key.Binding
-	Help         key.Binding
-	Quit         key.Binding
+	Up            key.Binding
+	Down          key.Binding
+	Left          key.Binding
+	Right         key.Binding
+	AllTasksTab   key.Binding
+	CompletedTab  key.Binding
+	Filter        key.Binding
+	SetInput      key.Binding
+	ClearInput    key.Binding
+	ExitInput     key.Binding
+	New           key.Binding
+	NewWithEditor key.Binding
+	CreateNewTask key.Binding
+	Edit          key.Binding
+	Sync          key.Binding
+	Help          key.Binding
+	Quit          key.Binding
 }
 
 type InputFieldCommand = string
@@ -88,15 +90,23 @@ var (
 			key.WithKeys("n"),
 			key.WithHelp("n", "new"),
 		),
-		SetFilter: key.NewBinding(
+		NewWithEditor: key.NewBinding(
+			key.WithKeys("N"),
+			key.WithHelp("N", "new in editor"),
+		),
+		CreateNewTask: key.NewBinding(
 			key.WithKeys("enter"),
 			key.WithHelp("enter", "set"),
 		),
-		ClearFilter: key.NewBinding(
+		SetInput: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "set"),
+		),
+		ClearInput: key.NewBinding(
 			key.WithKeys("ctrl+c"),
 			key.WithHelp("ctrl+c", "clear"),
 		),
-		ExitFilter: key.NewBinding(
+		ExitInput: key.NewBinding(
 			key.WithKeys("esc"),
 			key.WithHelp("esc", "exit"),
 		),
@@ -187,6 +197,8 @@ func (m model) Init() tea.Cmd {
 	return m.getLocalTodos
 }
 
+// Async functions
+
 func (m model) getLocalTodos() tea.Msg {
 	res, err := m.storage.localTodos()
 	if err != nil {
@@ -211,11 +223,58 @@ func (m model) fetchTodos() tea.Msg {
 	}
 }
 
-/////////////
-// Update
-////////////
+func (m model) quickAdd(content string) func() tea.Msg {
+	return func() tea.Msg {
+		todos, err := m.storage.quickAdd(content)
+		if err != nil {
+			return SyncError{ // TODO: new error
+				err: err,
+			}
+		}
+		return FetchedTodos{
+			data: todos,
+		}
+	}
+}
 
-func openEditor(m model) tea.Cmd {
+func (m model) newTask(todo Todo) func() tea.Msg {
+	return func() tea.Msg {
+		todos, err := m.storage.newTask(todo)
+		if err != nil {
+			return SyncError{ // TODO: new error
+				err: err,
+			}
+		}
+		return FetchedTodos{
+			data: todos,
+		}
+	}
+}
+func newTaskInEditor(m model) tea.Cmd {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vim"
+	}
+	path, err := createNewTaskFile()
+	if err != nil {
+		return nil
+	}
+	c := exec.Command(editor, path)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		if err != nil {
+			return editorFinishedMsg{err}
+		}
+		todo, err := parseTaskFile(path)
+		if err != nil {
+			return editorFinishedMsg{err}
+		}
+		return NewTask{
+			data: todo,
+		}
+	})
+}
+
+func editTaskInEditor(m model) tea.Cmd {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vim"
@@ -230,12 +289,19 @@ func openEditor(m model) tea.Cmd {
 	})
 }
 
+/////////////
+// Update
+////////////
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case SyncError:
 		m.syncError = msg.err
 		return m, nil
+
+	case NewTask:
+		return m, m.newTask(msg.data)
 
 	case LocalTodos:
 		m.todos = msg.data
@@ -260,13 +326,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyMsg:
 			switch msg.String() {
 
-			// TODO: handle
 			case "enter":
-				m.currentFilter = m.textInput.Value()
+				value := m.textInput.Value()
+				if m.inputField.command == inputFieldCommandFilter {
+					m.currentFilter = value
+					m.filteredTodos = filterContents(m.todos, value)
+				}
 				m.textInput.SetValue("")
 				m.textInput.Prompt = ""
 				m.inputField.enabled = false
 				m.moveCursor(tea.KeyMsg{})
+				if m.inputField.command == inputFieldCommandNew {
+					m.inputField.command = ""
+					return m, m.quickAdd(value)
+				}
+				m.inputField.command = ""
 				return m, nil
 			case "ctrl+c", "esc": // TODO: use keys instead (keymatches)
 				m.textInput.SetValue("")
@@ -296,7 +370,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Edit):
-			return m, openEditor(m)
+			return m, editTaskInEditor(m)
+		case key.Matches(msg, m.keys.NewWithEditor):
+			return m, newTaskInEditor(m)
 		case key.Matches(msg, m.keys.Down), key.Matches(msg, m.keys.Up):
 			m.moveCursor(msg)
 		case key.Matches(msg, m.keys.AllTasksTab), key.Matches(msg, m.keys.CompletedTab):
@@ -501,10 +577,10 @@ func (t Todo) renderInList(w int) string {
 // Returns the valid command keys to be used, based on current state
 func (m model) getValidKeys(k keyMap) []key.Binding {
 	if m.inputField.enabled {
-		return []key.Binding{k.SetFilter, k.ClearFilter, k.ExitFilter}
+		return []key.Binding{k.SetInput, k.ClearInput, k.ExitInput}
 	}
 	if m.showHelp {
-		return []key.Binding{k.Sync, k.New, k.Filter, k.Up, k.Down, k.AllTasksTab, k.CompletedTab, k.Help, k.Quit}
+		return []key.Binding{k.Sync, k.New, k.NewWithEditor, k.Edit, k.Filter, k.Up, k.Down, k.AllTasksTab, k.CompletedTab, k.Help, k.Quit}
 	}
 	return []key.Binding{k.Help, k.Quit}
 }
