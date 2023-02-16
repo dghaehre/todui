@@ -86,6 +86,21 @@ func filterContents(list []Todo, filter string) []Todo {
 	return newList
 }
 
+// Get length of the longest project name in the list
+func projectNameSize(list []Todo, max int) int {
+	res := 0
+	for _, v := range list {
+		l := len(v.ProjectName)
+		if l > res {
+			if l >= max {
+				return max
+			}
+			res = l
+		}
+	}
+	return res
+}
+
 func withSize(s string, i int) string {
 	ss := strings.TrimRight(s, " ")
 	if len(ss) <= (i - 3) {
@@ -172,8 +187,8 @@ func createNewTaskFile() (string, error) {
 	path := fmt.Sprintf("/tmp/%d.md", time.Now().Unix())
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "---")
-  fmt.Fprintf(&b, "labels: ")
-  fmt.Fprintf(&b, "project: Inbox")
+	fmt.Fprintf(&b, "labels: ")
+	fmt.Fprintf(&b, "project: Inbox")
 	fmt.Fprintf(&b, "---")
 	fmt.Fprintf(&b, "# ")
 	err := ioutil.WriteFile(path, b.Bytes(), 0644)

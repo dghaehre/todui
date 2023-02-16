@@ -48,6 +48,7 @@ func (api API) getPending(ctx context.Context, token string) (SyncResponse, erro
 	err = json.NewDecoder(res.Body).Decode(&syncResponse)
 	return syncResponse, err
 }
+
 func (api API) quickAdd(ctx context.Context, content string) error {
 	values := url.Values{
 		"text": {content},
@@ -68,4 +69,8 @@ func (api API) quickAdd(ctx context.Context, content string) error {
 		return fmt.Errorf("quickadd returned %d status code", res.StatusCode)
 	}
 	return nil
+}
+
+func (api API) newTask(ctx context.Context, todo Todo) error {
+	return fmt.Errorf("not implemented yet")
 }

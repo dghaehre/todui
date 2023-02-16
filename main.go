@@ -527,47 +527,40 @@ func (m model) bottomBar() string {
 }
 
 func (m model) allTasksList() string {
-	// We currently assume that the cursor position has view default
+	projectLength := projectNameSize(m.filteredTodos, 30)
 	content := ""
-	style := lipgloss.NewStyle().
-		Width(m.totalWidth).
-		Align(lipgloss.Left)
-
 	for i, v := range m.filteredTodos {
 		if m.cursor.index == i {
-			content += "→ " + v.renderInList(m.totalWidth)
+			content += "→ " + v.renderInList(m.totalWidth, projectLength)
 		} else {
-			content += "  " + v.renderInList(m.totalWidth)
+			content += "  " + v.renderInList(m.totalWidth, projectLength)
 		}
 		content += "\n"
 		if i == m.listHeight {
 			break
 		}
 	}
-	return style.Render(content)
+	return content
 }
 
-func (t Todo) renderInList(w int) string {
+func (t Todo) renderInList(w int, projectNameLength int) string {
 	desc := defaultTextStyle.Render(withSize(t.Content, w-50))
-
 	labels := ""
 	for _, l := range t.Labels {
 		labels += labelsStyle.Render(" @" + l)
 	}
-
-	// TODO: remove emojis
-	project := ""
+	project := " "
 	if t.ProjectName != "" {
-		project = projectStyle.Render(" #" + t.ProjectName)
+		project = "#" + t.ProjectName
 	}
-
+	project = projectStyle.Width(projectNameLength + 1).Render(project)
 	children := ""
 	totalChildren := len(t.Children)
 	if totalChildren > 0 {
 		completedChildren := totalChildren // TODO
 		children += dimTextStyle.Render(fmt.Sprintf(" (%d/%d)", completedChildren, totalChildren))
 	}
-	return desc + " " + project + labels + children
+	return project + " " + desc + " " + labels + children
 }
 
 /////////////
