@@ -9,7 +9,11 @@ type LocalTodos struct {
 }
 
 type NewTask struct {
-  data Todo
+	data Todo
+}
+
+type EditTask struct {
+	data Todo
 }
 
 // ^

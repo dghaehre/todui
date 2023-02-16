@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -141,6 +142,15 @@ var (
 
 	labelsStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("5"))
+
+	p1Style = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("1"))
+
+	p2Style = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("3"))
+
+	p3Style = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("4"))
 )
 
 type cursorPosition struct {
@@ -250,6 +260,21 @@ func (m model) newTask(todo Todo) func() tea.Msg {
 		}
 	}
 }
+
+func (m model) editTask(todo Todo) func() tea.Msg {
+	return func() tea.Msg {
+		todos, err := m.storage.editTask(todo)
+		if err != nil {
+			return SyncError{ // TODO: new error
+				err: err,
+			}
+		}
+		return FetchedTodos{
+			data: todos,
+		}
+	}
+}
+
 func newTaskInEditor(m model) tea.Cmd {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
@@ -279,13 +304,23 @@ func editTaskInEditor(m model) tea.Cmd {
 	if editor == "" {
 		editor = "vim"
 	}
-	path, err := createEditFile(m)
+	todo := m.filteredTodos[m.cursor.index]
+	path, err := createEditFile(todo)
 	if err != nil {
 		return nil
 	}
 	c := exec.Command(editor, path)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
-		return editorFinishedMsg{err}
+		if err != nil {
+			return editorFinishedMsg{err}
+		}
+		todo, err := parseEditFile(path, todo)
+		if err != nil {
+			return editorFinishedMsg{err}
+		}
+		return EditTask{
+			data: todo,
+		}
 	})
 }
 
@@ -303,14 +338,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case NewTask:
 		return m, m.newTask(msg.data)
 
+	case EditTask:
+		return m, m.editTask(msg.data)
+
 	case LocalTodos:
 		m.todos = msg.data
-		m.filteredTodos = filterContents(msg.data, m.currentFilter)
+		filtered := filterContents(msg.data, m.currentFilter)
+		sort.Sort(ByPriority(filtered))
+		m.filteredTodos = filtered
 		return m, m.fetchTodos
 
 	case FetchedTodos:
 		m.todos = msg.data
-		m.filteredTodos = filterContents(msg.data, m.currentFilter)
+		filtered := filterContents(msg.data, m.currentFilter)
+		sort.Sort(ByPriority(filtered))
+		m.filteredTodos = filtered
 		return m, nil
 
 	// Set window size
@@ -554,13 +596,14 @@ func (t Todo) renderInList(w int, projectNameLength int) string {
 		project = "#" + t.ProjectName
 	}
 	project = projectStyle.Width(projectNameLength + 1).Render(project)
+	priority := displayPrioriy(t.Priority)
 	children := ""
 	totalChildren := len(t.Children)
 	if totalChildren > 0 {
 		completedChildren := totalChildren // TODO
 		children += dimTextStyle.Render(fmt.Sprintf(" (%d/%d)", completedChildren, totalChildren))
 	}
-	return project + " " + desc + " " + labels + children
+	return project + " " + priority + " " + desc + " " + labels + children
 }
 
 /////////////

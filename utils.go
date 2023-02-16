@@ -172,8 +172,7 @@ func toTodos(items []Item, projects []Project) []Todo {
 }
 
 // in markdown
-func createEditFile(m model) (string, error) {
-	todo := m.filteredTodos[m.cursor.index]
+func createEditFile(todo Todo) (string, error) {
 	path := fmt.Sprintf("/tmp/%s.md", todo.Id)
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# %s", todo.Content)
@@ -181,6 +180,22 @@ func createEditFile(m model) (string, error) {
 	fmt.Fprintf(&b, "%s", todo.Description)
 	err := ioutil.WriteFile(path, b.Bytes(), 0644)
 	return path, err
+}
+
+func parseEditFile(path string, todo Todo) (Todo, error) {
+	b, err := ioutil.ReadFile(path)
+	if err != nil {
+		return todo, err
+	}
+	lines := strings.SplitN(string(b), "\n", 2)
+	todo.Content = strings.TrimPrefix(lines[0], "# ")
+	if len(todo.Content) < 2 {
+		return todo, fmt.Errorf("parse error: could not parse header")
+	}
+	if len(lines) == 2 {
+		todo.Description = strings.TrimSpace(lines[1])
+	}
+	return todo, nil
 }
 
 func createNewTaskFile() (string, error) {
@@ -210,4 +225,17 @@ func parseTaskFile(path string) (todo Todo, err error) {
 		todo.Description = lines[1]
 	}
 	return todo, nil
+}
+
+func displayPrioriy(p int) string {
+	switch p {
+	case 4:
+		return p1Style.Render("p1")
+	case 3:
+		return p2Style.Render("p2")
+	case 2:
+		return p3Style.Render("p3")
+	default:
+		return "  "
+	}
 }

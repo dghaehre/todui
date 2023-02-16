@@ -72,5 +72,36 @@ func (api API) quickAdd(ctx context.Context, content string) error {
 }
 
 func (api API) newTask(ctx context.Context, todo Todo) error {
-	return fmt.Errorf("not implemented yet")
+	return fmt.Errorf("new task: not implemented yet")
+}
+
+// TODO: use sync api
+// NOT usign the sync API
+//
+// Currently only sending content and description
+func (api API) editTask(ctx context.Context, todo Todo) error {
+	url := fmt.Sprintf("https://api.todoist.com/rest/v2/tasks/%s", todo.Id)
+	t := struct {
+		Content     string `json:"content"`
+		Description string `json:"description"`
+	}{Content: todo.Content, Description: todo.Description}
+	body, err := json.Marshal(t)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Authorization", "Bearer "+api.token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		return fmt.Errorf("Could not edit task. API returned %d status code", res.StatusCode)
+	}
+	return nil
 }

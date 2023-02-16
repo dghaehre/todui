@@ -2,8 +2,8 @@ package main
 
 import (
 	// "io/ioutil"
-  // "io/fs"
-	// "os"
+	// "io/fs"
+	"os"
 	"strings"
 	"testing"
 
@@ -94,6 +94,25 @@ func TestParseTaskFile(t *testing.T) {
 	// require.Equal(t, "description\nhei", todo.Description)
 	// err = os.Remove(path)
 	// require.NoError(t, err)
+}
+
+func TestEditAndParseTaskFile(t *testing.T) {
+	todo := Todo{
+		Id:          "123",
+		ProjectName: "chores",
+		ProjectId:   "456",
+		Content:     "A test todo",
+		Description: "from a test",
+	}
+
+	path, err := createEditFile(todo)
+	require.NoError(t, err)
+	newTodo, err := parseEditFile(path, todo)
+	require.NoError(t, err)
+	require.EqualValues(t, todo, newTodo)
+
+	err = os.Remove(path)
+	require.NoError(t, err)
 }
 
 func TestProjectNameSize(t *testing.T) {
