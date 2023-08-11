@@ -89,3 +89,13 @@ func (s Storage) quickAdd(content string) ([]Todo, error) {
 	}
 	return s.fetchTodos()
 }
+
+func (s Storage) markAsDone(todo Todo) ([]Todo, error) {
+	ctx, cancel := newContext()
+	defer cancel()
+	err := s.api.markAsDone(ctx, todo)
+	if err != nil {
+		return nil, err
+	}
+	return s.fetchTodos()
+}

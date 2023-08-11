@@ -26,6 +26,9 @@ type keyMap struct {
 	Right         key.Binding
 	AllTasksTab   key.Binding
 	CompletedTab  key.Binding
+	TodayTab      key.Binding
+	InboxTab      key.Binding
+	Done          key.Binding
 	Filter        key.Binding
 	SetInput      key.Binding
 	ClearInput    key.Binding
@@ -45,11 +48,13 @@ type View = string
 type Tab = int
 
 const (
-	allTasksTab Tab = iota
+	inboxTab Tab = iota
+	todayTab
+	allTasksTab
 	completedTab
 
 	// NOTE: make sure to increment counter if we add a new page
-	totalTab = 2
+	totalTab = 4
 )
 
 var (
@@ -79,17 +84,29 @@ var (
 			key.WithKeys("/"),
 			key.WithHelp("/", "filter"),
 		),
-		AllTasksTab: key.NewBinding(
+		InboxTab: key.NewBinding(
 			key.WithKeys("1"),
-			key.WithHelp("1", "All tasks tab"),
+			key.WithHelp("1", "inbox tab"),
+		),
+		TodayTab: key.NewBinding(
+			key.WithKeys("2"),
+			key.WithHelp("2", "today tab"),
+		),
+		AllTasksTab: key.NewBinding(
+			key.WithKeys("3"),
+			key.WithHelp("3", "All tasks tab"),
 		),
 		CompletedTab: key.NewBinding(
-			key.WithKeys("2"),
-			key.WithHelp("2", "completed tab"),
+			key.WithKeys("4"),
+			key.WithHelp("4", "completed tab"),
 		),
 		New: key.NewBinding(
 			key.WithKeys("n"),
 			key.WithHelp("n", "new"),
+		),
+		Done: key.NewBinding(
+			key.WithKeys("D"),
+			key.WithHelp("D", "Mark as done"),
 		),
 		NewWithEditor: key.NewBinding(
 			key.WithKeys("N"),
@@ -140,6 +157,9 @@ var (
 	projectStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("14"))
 
+	dueDateStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("5"))
+
 	labelsStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("5"))
 
@@ -167,22 +187,25 @@ type inputField struct {
 type editorFinishedMsg struct{ err error }
 
 type model struct {
-	storage       Storage
-	keys          keyMap
-	totalWidth    int
-	totalHeight   int
-	listHeight    int
-	debug         bool
-	sync          bool
-	todos         []Todo
-	filteredTodos []Todo
-	cursor        cursorPosition
-	tab           Tab
-	currentFilter string
-	showHelp      bool
-	textInput     textinput.Model
-	inputField    inputField
-	syncError     error
+	storage        Storage
+	keys           keyMap
+	totalWidth     int
+	totalHeight    int
+	listHeight     int
+	debug          bool
+	syncing        bool
+	todos          []Todo
+	filteredTodos  []Todo
+	todayTodos     []Todo
+	inboxTodos     []Todo
+	completedTodos []Todo
+	cursor         cursorPosition
+	tab            Tab
+	currentFilter  string
+	showHelp       bool
+	textInput      textinput.Model
+	inputField     inputField
+	syncError      error
 }
 
 func NewModel(storage Storage, debug bool) model {
@@ -195,8 +218,9 @@ func NewModel(storage Storage, debug bool) model {
 		storage:   storage,
 		keys:      keys,
 		debug:     debug,
-		tab:       allTasksTab,
+		tab:       todayTab,
 		textInput: ti,
+		syncing:   true, // always try to sync on startup
 		cursor: cursorPosition{
 			index: 0,
 		},
@@ -209,6 +233,7 @@ func (m model) Init() tea.Cmd {
 
 // Async functions
 
+// Will eventually call fetchTodos
 func (m model) getLocalTodos() tea.Msg {
 	res, err := m.storage.localTodos()
 	if err != nil {
@@ -236,6 +261,20 @@ func (m model) fetchTodos() tea.Msg {
 func (m model) quickAdd(content string) func() tea.Msg {
 	return func() tea.Msg {
 		todos, err := m.storage.quickAdd(content)
+		if err != nil {
+			return SyncError{ // TODO: new error
+				err: err,
+			}
+		}
+		return FetchedTodos{
+			data: todos,
+		}
+	}
+}
+
+func (m model) markAsDone(todo Todo) func() tea.Msg {
+	return func() tea.Msg {
+		todos, err := m.storage.markAsDone(todo)
 		if err != nil {
 			return SyncError{ // TODO: new error
 				err: err,
@@ -299,15 +338,33 @@ func newTaskInEditor(m model) tea.Cmd {
 	})
 }
 
-func editTaskInEditor(m model) tea.Cmd {
+// TODO:
+// handle error if cursor is out of scope
+// handle multiple pages
+func (m model) getCurrentTodo() (Todo, error) {
+	var todos []Todo
+	switch m.tab {
+	case todayTab:
+		todos = m.todayTodos
+	case inboxTab:
+		todos = m.inboxTodos
+	case completedTab:
+		todos = m.completedTodos
+	default:
+		todos = m.filteredTodos
+	}
+
+	if m.cursor.index >= len(todos) {
+		return Todo{}, fmt.Errorf("cursor out of scope")
+	}
+	todo := todos[m.cursor.index]
+	return todo, nil
+}
+
+func editTaskInEditor(todo Todo, path string) tea.Cmd {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vim"
-	}
-	todo := m.filteredTodos[m.cursor.index]
-	path, err := createEditFile(todo)
-	if err != nil {
-		return nil
 	}
 	c := exec.Command(editor, path)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
@@ -346,20 +403,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		filtered := filterContents(msg.data, m.currentFilter)
 		sort.Sort(ByPriority(filtered))
 		m.filteredTodos = filtered
+		m.todayTodos = filterToday(m.filteredTodos)
+		m.inboxTodos = filterInbox(m.filteredTodos)
 		return m, m.fetchTodos
 
 	case FetchedTodos:
 		m.todos = msg.data
 		filtered := filterContents(msg.data, m.currentFilter)
-		sort.Sort(ByPriority(filtered))
+		sort.Sort(ByDue(filtered))
 		m.filteredTodos = filtered
+		m.todayTodos = filterToday(m.filteredTodos)
+		m.inboxTodos = filterInbox(m.filteredTodos)
+		m.syncing = false
 		return m, nil
 
 	// Set window size
 	case tea.WindowSizeMsg:
 		m.totalHeight = msg.Height
 		m.totalWidth = msg.Width
-		m.listHeight = 20
+		m.listHeight = msg.Height - 8
 		return m, nil
 	}
 
@@ -373,6 +435,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.inputField.command == inputFieldCommandFilter {
 					m.currentFilter = value
 					m.filteredTodos = filterContents(m.todos, value)
+					m.todayTodos = filterToday(m.filteredTodos)
+					m.inboxTodos = filterInbox(m.filteredTodos)
 				}
 				m.textInput.SetValue("")
 				m.textInput.Prompt = ""
@@ -380,6 +444,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveCursor(tea.KeyMsg{})
 				if m.inputField.command == inputFieldCommandNew {
 					m.inputField.command = ""
+					m.syncing = true
 					return m, m.quickAdd(value)
 				}
 				m.inputField.command = ""
@@ -392,6 +457,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Delete current filter
 				m.filteredTodos = m.todos
 				m.currentFilter = ""
+				m.todayTodos = filterToday(m.filteredTodos)
+				m.inboxTodos = filterInbox(m.filteredTodos)
 				m.moveCursor(tea.KeyMsg{})
 				return m, nil
 			}
@@ -402,6 +469,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.inputField.command == inputFieldCommandFilter {
 			m.filteredTodos = filterContents(m.todos, m.textInput.Value())
+			m.todayTodos = filterToday(m.filteredTodos)
+			m.inboxTodos = filterInbox(m.filteredTodos)
 		}
 
 		return m, cmd
@@ -412,13 +481,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Edit):
-			return m, editTaskInEditor(m)
+			todo, err := m.getCurrentTodo()
+			if err != nil {
+				// handle error
+			}
+			path, err := createEditFile(todo)
+			if err != nil {
+				// TODO: handle error
+			}
+			m.syncing = true
+			return m, editTaskInEditor(todo, path)
 		case key.Matches(msg, m.keys.NewWithEditor):
 			return m, newTaskInEditor(m)
 		case key.Matches(msg, m.keys.Down), key.Matches(msg, m.keys.Up):
 			m.moveCursor(msg)
-		case key.Matches(msg, m.keys.AllTasksTab), key.Matches(msg, m.keys.CompletedTab):
+		case key.Matches(msg, m.keys.AllTasksTab), key.Matches(msg, m.keys.CompletedTab), key.Matches(msg, m.keys.TodayTab), key.Matches(msg, m.keys.InboxTab):
 			m.changeTab(msg)
+		case key.Matches(msg, m.keys.Done):
+			todo, err := m.getCurrentTodo()
+			if err != nil {
+				// handle error
+			}
+			m.syncing = true
+			return m, m.markAsDone(todo)
 		case key.Matches(msg, m.keys.Help):
 			m.showHelp = !m.showHelp
 			return m, nil
@@ -440,9 +525,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inputField.command = inputFieldCommandNew
 			return m, nil
 		case key.Matches(msg, m.keys.Sync):
-			m.sync = true
-			return m, nil
-			// m.changeTab(msg)
+			m.syncing = true
+			return m, m.fetchTodos
 		case key.Matches(msg, m.keys.Help):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Quit):
@@ -466,8 +550,8 @@ func (m model) debugView() string {
 	if !m.debug {
 		return ""
 	}
-	content := fmt.Sprintf("h: %d, w: %d, Cursor: %+v, Tab: %+v, todos: %d, filteredTodos: %d, syncError: %+v",
-		m.totalHeight, m.totalWidth, m.cursor, m.tab, len(m.todos), len(m.filteredTodos), m.syncError)
+	content := fmt.Sprintf("h: %d, w: %d, Cursor: %+v, Tab: %+v, todos: %d, todayTodos: %d, filteredTodos: %d, syncError: %+v",
+		m.totalHeight, m.totalWidth, m.cursor, m.tab, len(m.todos), len(m.todayTodos), len(m.filteredTodos), m.syncError)
 	style := lipgloss.NewStyle().
 		Width(m.totalWidth).
 		Align(lipgloss.Right)
@@ -477,7 +561,13 @@ func (m model) debugView() string {
 func (m model) getMainList() string {
 	switch m.tab {
 	case allTasksTab:
-		return m.allTasksList()
+		return m.listView(m.filteredTodos)
+	case todayTab:
+		return m.listView(m.todayTodos)
+	case inboxTab:
+		return m.listView(m.inboxTodos)
+	// case completedTab:
+	// 	return m.listView(m.completedTodos)
 	default:
 		return "TODO"
 	}
@@ -489,6 +579,10 @@ func tabToString(p Tab) string {
 		return "Completed tasks"
 	case allTasksTab:
 		return "All tasks"
+	case inboxTab:
+		return "Inbox"
+	case todayTab:
+		return "Today tasks"
 	}
 	return ""
 }
@@ -509,6 +603,17 @@ func (m model) topBar() string {
 		if i != (totalTab - 1) {
 			s += " | "
 		}
+	}
+
+	if m.syncing {
+		s += "  " + dimTextStyle.Render("syncing...")
+	}
+
+	s += "\n"
+	if m.currentFilter != "" {
+		s += chosenTextStyle.Render("  filter: on")
+	} else {
+		s += dimTextStyle.Render("  filter: off")
 	}
 
 	tabStyle := lipgloss.NewStyle().
@@ -568,20 +673,23 @@ func (m model) bottomBar() string {
 	return input + style.Render(s)
 }
 
-func (m model) allTasksList() string {
-	projectLength := projectNameSize(m.filteredTodos, 30)
+func (m model) listView(todos []Todo) string {
+	projectLength := projectNameSize(todos, 30)
 	content := ""
-	for i, v := range m.filteredTodos {
+	showing := 0
+	for i, v := range todos {
 		if m.cursor.index == i {
 			content += "→ " + v.renderInList(m.totalWidth, projectLength)
 		} else {
 			content += "  " + v.renderInList(m.totalWidth, projectLength)
 		}
 		content += "\n"
+		showing = i + 1
 		if i == m.listHeight {
 			break
 		}
 	}
+	content += fmt.Sprintf("\nshowing %d of %d", showing, len(todos))
 	return content
 }
 
@@ -596,14 +704,14 @@ func (t Todo) renderInList(w int, projectNameLength int) string {
 		project = "#" + t.ProjectName
 	}
 	project = projectStyle.Width(projectNameLength + 1).Render(project)
+	due := dueDateStyle.Width(10).Render(t.DueDisplay())
 	priority := displayPrioriy(t.Priority)
 	children := ""
 	totalChildren := len(t.Children)
 	if totalChildren > 0 {
-		completedChildren := totalChildren // TODO
-		children += dimTextStyle.Render(fmt.Sprintf(" (%d/%d)", completedChildren, totalChildren))
+		children += dimTextStyle.Render(fmt.Sprintf(" (%d)", totalChildren))
 	}
-	return project + " " + priority + " " + desc + " " + labels + children
+	return project + " " + due + " " + priority + " " + desc + " " + labels + children
 }
 
 /////////////
@@ -637,15 +745,21 @@ func (m model) getEmptyLines(content string) string {
 
 func (m *model) changeTab(km tea.KeyMsg) {
 	switch {
-	case key.Matches(km, m.keys.AllTasksTab):
+	case key.Matches(km, m.keys.InboxTab):
 		m.tab = 0
-	case key.Matches(km, m.keys.CompletedTab):
+	case key.Matches(km, m.keys.TodayTab):
 		m.tab = 1
+	case key.Matches(km, m.keys.AllTasksTab):
+		m.tab = 2
+	case key.Matches(km, m.keys.CompletedTab):
+		m.tab = 3
 	}
 }
 
 func (m *model) moveCursor(km tea.KeyMsg) {
 	bottom := m.listHeight
+
+	// TODO: make this work for all pages
 	if len(m.filteredTodos) < bottom {
 		bottom = len(m.filteredTodos) - 1
 	}

@@ -71,6 +71,25 @@ func (api API) quickAdd(ctx context.Context, content string) error {
 	return nil
 }
 
+func (api API) markAsDone(ctx context.Context, todo Todo) error {
+	url := fmt.Sprintf("https://api.todoist.com/rest/v2/tasks/%s/close", todo.Id)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(""))
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Authorization", "Bearer "+api.token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 204 {
+		return fmt.Errorf("Could not mark task as done. API returned %d status code, expected 204", res.StatusCode)
+	}
+	return nil
+}
+
 func (api API) newTask(ctx context.Context, todo Todo) error {
 	return fmt.Errorf("new task: not implemented yet")
 }

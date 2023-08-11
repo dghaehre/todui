@@ -86,6 +86,26 @@ func filterContents(list []Todo, filter string) []Todo {
 	return newList
 }
 
+func filterToday(list []Todo) []Todo {
+	var newList = make([]Todo, 0)
+	for _, t := range list {
+		if t.DueToday() {
+			newList = append(newList, t)
+		}
+	}
+	return newList
+}
+
+func filterInbox(list []Todo) []Todo {
+	var newList = make([]Todo, 0)
+	for _, t := range list {
+		if t.ProjectName == "Inbox" {
+			newList = append(newList, t)
+		}
+	}
+	return newList
+}
+
 // Get length of the longest project name in the list
 func projectNameSize(list []Todo, max int) int {
 	res := 0
@@ -129,6 +149,7 @@ func toTodo(item Item, projects []Project) Todo {
 		Priority:    item.Priority,
 		Labels:      item.Labels,
 		Checked:     item.Checked,
+		Due:         item.Due,
 		Children:    []Todo{},
 	}
 }

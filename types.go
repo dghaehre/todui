@@ -1,5 +1,7 @@
 package main
 
+import "time"
+
 type FetchedTodos struct {
 	data []Todo
 }
@@ -49,10 +51,39 @@ type Todo struct {
 	Labels      []string
 	Checked     bool
 	Children    []Todo
+	Due         Due
+}
+
+func (t Todo) DueToday() bool {
+	return t.Due.Date == time.Now().Format("2006-01-02")
+}
+
+func (t Todo) DueDisplay() string {
+	if t.Due.Date == "" {
+		return ""
+	}
+	parsed, err := time.Parse("2006-01-02", t.Due.Date)
+	if err != nil {
+		return t.Due.Date
+	}
+	if parsed.Before(time.Now().AddDate(0, 0, 7)) {
+		if parsed.Day() == time.Now().Day() {
+			return "Today"
+		}
+		return parsed.Weekday().String()
+	}
+	return t.Due.Date
+}
+
+type Due struct {
+	String      string `json:"string"`
+	Date        string `json:"date"`
+	Lang        string `json:"lang"`
+	IsRecurring bool   `json:"is_recurring"`
+	Timezone    string `json:"timezone,omitempty"`
 }
 
 type Item struct {
-	// Due         string   `json:"due,omitempty"`
 	Id          string   `json:"id"`
 	ProjectId   string   `json:"project_id"`
 	Content     string   `json:"content"`
@@ -61,25 +92,5 @@ type Item struct {
 	ParentId    string   `json:"parent_id"`
 	Labels      []string `json:"labels"`
 	Checked     bool     `json:"checked"`
+	Due         Due      `json:"due"`
 }
-
-// "id": "2995104339",
-// "user_id": "2671355",
-// "project_id": "2203306141",
-// "content": "Buy Milk",
-// "description": "",
-// "priority": 1,
-// "due": null,
-// "parent_id": null,
-// "child_order": 1,
-// "section_id": null,
-// "day_order": -1,
-// "collapsed": false,
-// "labels": ["Food", "Shopping"],
-// "added_by_uid": "2671355",
-// "assigned_by_uid": "2671355",
-// "responsible_uid": null,
-// "checked": false,
-// "is_deleted": false,
-// "sync_id": null,
-// "added_at": "2014-09-26T08:25:05.000000Z"

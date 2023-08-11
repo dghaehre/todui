@@ -24,6 +24,13 @@ func TestInsert(t *testing.T) {
 			Priority:    0,
 			ParentId:    "",
 			Checked:     false,
+			Due: Due{
+				IsRecurring: true,
+				Date:        "",
+				String:      "",
+				Timezone:    "",
+				Lang:        "",
+			},
 		}},
 		Projects: []Project{{
 			Id:   "1",
@@ -39,6 +46,7 @@ func TestInsert(t *testing.T) {
 	require.Equal(t, syncResponse.Items[0].Description, res.Items[0].Description)
 	require.Equal(t, syncResponse.Items[0].Content, res.Items[0].Content)
 	require.Equal(t, syncResponse.Items[0].Id, res.Items[0].Id)
+	require.Equal(t, syncResponse.Items[0].Due.IsRecurring, res.Items[0].Due.IsRecurring)
 	require.Equal(t, syncResponse.Items[0].Checked, res.Items[0].Checked)
 	require.Equal(t, syncResponse.Projects[0].Name, res.Projects[0].Name)
 }

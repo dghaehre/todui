@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -64,7 +65,12 @@ create table if not exists item (
  description text,
  priority integer,
  parent_id integer,
- checked bit
+ checked bit,
+ due_is_recurring bit,
+ due_date text,
+ due_string text,
+ due_timezone text,
+ due_lang text
 )`)
 	return err
 }
@@ -94,7 +100,7 @@ func (db DB) InsertFromSync(ctx context.Context, res SyncResponse) error {
 }
 
 func insertItems(ctx context.Context, tx *sql.Tx, items []Item) error {
-	query := `replace into item (id, project_id, content, description, priority, parent_id, checked) values (@id, @projectid, @content, @description, @priority, @parentid, @checked)`
+	query := `replace into item (id, project_id, content, description, priority, parent_id, checked, due_is_recurring, due_date, due_string, due_timezone, due_lang) values (@id, @projectid, @content, @description, @priority, @parentid, @checked, @due_is_recurring, @due_date, @due_string, @due_timezone, @due_lang)`
 	for _, item := range items {
 		_, err := tx.ExecContext(ctx, query,
 			sql.Named("id", item.Id),
@@ -104,6 +110,11 @@ func insertItems(ctx context.Context, tx *sql.Tx, items []Item) error {
 			sql.Named("priority", item.Priority),
 			sql.Named("parentid", item.ParentId),
 			sql.Named("checked", item.Checked),
+			sql.Named("due_is_recurring", item.Due.IsRecurring),
+			sql.Named("due_date", item.Due.Date),
+			sql.Named("due_string", item.Due.String),
+			sql.Named("due_timezone", item.Due.Timezone),
+			sql.Named("due_lang", item.Due.Lang),
 		)
 		if err != nil {
 			return err
@@ -159,14 +170,25 @@ func (db DB) getPending(ctx context.Context) (res PendingResponse, err error) {
 
 func (db DB) getPendingItems(ctx context.Context) ([]Item, error) {
 	var items = make([]Item, 0)
-	query := `select id, project_id, content, description, priority, parent_id from item where checked = false`
+	query := `select id, project_id, content, description, priority, parent_id, due_string, due_date, due_lang, due_is_recurring, due_timezone from item where checked = false`
 	rows, err := db.conn.QueryContext(ctx, query)
 	if err != nil {
 		return items, err
 	}
 	for rows.Next() {
 		var item Item
-		err = rows.Scan(&item.Id, &item.ProjectId, &item.Content, &item.Description, &item.Priority, &item.ParentId)
+		err = rows.Scan(&item.Id,
+			&item.ProjectId,
+			&item.Content,
+			&item.Description,
+			&item.Priority,
+			&item.ParentId,
+			&item.Due.String,
+			&item.Due.Date,
+			&item.Due.Lang,
+			&item.Due.IsRecurring,
+			&item.Due.Timezone,
+		)
 		if err != nil {
 			return items, err
 		}
