@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -66,6 +67,7 @@ create table if not exists item (
  priority integer,
  parent_id integer,
  checked bit,
+ labels text,
  due_is_recurring bit,
  due_date text,
  due_string text,
@@ -100,7 +102,7 @@ func (db DB) InsertFromSync(ctx context.Context, res SyncResponse) error {
 }
 
 func insertItems(ctx context.Context, tx *sql.Tx, items []Item) error {
-	query := `replace into item (id, project_id, content, description, priority, parent_id, checked, due_is_recurring, due_date, due_string, due_timezone, due_lang) values (@id, @projectid, @content, @description, @priority, @parentid, @checked, @due_is_recurring, @due_date, @due_string, @due_timezone, @due_lang)`
+	query := `replace into item (id, project_id, content, description, priority, parent_id, checked, due_is_recurring, due_date, due_string, due_timezone, due_lang, labels) values (@id, @projectid, @content, @description, @priority, @parentid, @checked, @due_is_recurring, @due_date, @due_string, @due_timezone, @due_lang, @labels)`
 	for _, item := range items {
 		_, err := tx.ExecContext(ctx, query,
 			sql.Named("id", item.Id),
@@ -115,6 +117,7 @@ func insertItems(ctx context.Context, tx *sql.Tx, items []Item) error {
 			sql.Named("due_string", item.Due.String),
 			sql.Named("due_timezone", item.Due.Timezone),
 			sql.Named("due_lang", item.Due.Lang),
+			sql.Named("labels", strings.Join(item.Labels, ",")),
 		)
 		if err != nil {
 			return err
@@ -170,13 +173,14 @@ func (db DB) getPending(ctx context.Context) (res PendingResponse, err error) {
 
 func (db DB) getPendingItems(ctx context.Context) ([]Item, error) {
 	var items = make([]Item, 0)
-	query := `select id, project_id, content, description, priority, parent_id, due_string, due_date, due_lang, due_is_recurring, due_timezone from item where checked = false`
+	query := `select id, project_id, content, description, priority, parent_id, due_string, due_date, due_lang, due_is_recurring, due_timezone, labels from item where checked = false`
 	rows, err := db.conn.QueryContext(ctx, query)
 	if err != nil {
 		return items, err
 	}
 	for rows.Next() {
 		var item Item
+		var labels string
 		err = rows.Scan(&item.Id,
 			&item.ProjectId,
 			&item.Content,
@@ -188,6 +192,34 @@ func (db DB) getPendingItems(ctx context.Context) ([]Item, error) {
 			&item.Due.Lang,
 			&item.Due.IsRecurring,
 			&item.Due.Timezone,
+			&labels,
+		)
+		if err != nil {
+			return items, err
+		}
+		for _, l := range strings.Split(labels, ",") {
+			if strings.TrimSpace(l) != "" {
+				item.Labels = append(item.Labels, l)
+			}
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// TODO: also fetch from completed table?
+func (db DB) getCompletedItems(ctx context.Context) ([]CompletedItem, error) {
+	var items = make([]CompletedItem, 0)
+	query := `select id, project_id, content, description item where checked = true`
+	rows, err := db.conn.QueryContext(ctx, query)
+	if err != nil {
+		return items, err
+	}
+	for rows.Next() {
+		var item CompletedItem
+		err = rows.Scan(&item.Id,
+			&item.ProjectId,
+			&item.Content,
 		)
 		if err != nil {
 			return items, err

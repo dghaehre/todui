@@ -8,10 +8,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 )
 
 /////////////////
@@ -24,10 +26,13 @@ type keyMap struct {
 	Down          key.Binding
 	Left          key.Binding
 	Right         key.Binding
+	Top           key.Binding
+	Bottom        key.Binding
 	AllTasksTab   key.Binding
 	CompletedTab  key.Binding
 	TodayTab      key.Binding
 	InboxTab      key.Binding
+	Info          key.Binding
 	Done          key.Binding
 	Filter        key.Binding
 	SetInput      key.Binding
@@ -72,6 +77,14 @@ var (
 			key.WithKeys("down", "j"),
 			key.WithHelp("↓/j", "down"),
 		),
+		Top: key.NewBinding(
+			key.WithKeys("g"),
+			key.WithHelp("g", "to the top"),
+		),
+		Bottom: key.NewBinding(
+			key.WithKeys("G"),
+			key.WithHelp("G", "to the bottom"),
+		),
 		Left: key.NewBinding(
 			key.WithKeys("left", "h"),
 			key.WithHelp("←/h", "left"),
@@ -79,6 +92,10 @@ var (
 		Right: key.NewBinding(
 			key.WithKeys("right", "l"),
 			key.WithHelp("→/l", "right"),
+		),
+		Info: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "task info"),
 		),
 		Filter: key.NewBinding(
 			key.WithKeys("/"),
@@ -148,6 +165,9 @@ var (
 	defaultTextStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("15"))
 
+	cursorBackgroundStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("8"))
+
 	dimTextStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("8"))
 
@@ -159,6 +179,9 @@ var (
 
 	dueDateStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("5"))
+
+	dueDateOverdueStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("1"))
 
 	labelsStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("5"))
@@ -203,6 +226,7 @@ type model struct {
 	tab            Tab
 	currentFilter  string
 	showHelp       bool
+	showInfo       bool
 	textInput      textinput.Model
 	inputField     inputField
 	syncError      error
@@ -211,7 +235,7 @@ type model struct {
 func NewModel(storage Storage, debug bool) model {
 	ti := textinput.New()
 	ti.CharLimit = 156
-	ti.SetCursorMode(textinput.CursorStatic)
+	ti.Cursor.SetMode(cursor.CursorStatic)
 	ti.Placeholder = ""
 	ti.Prompt = ""
 	return model{
@@ -219,6 +243,7 @@ func NewModel(storage Storage, debug bool) model {
 		keys:      keys,
 		debug:     debug,
 		tab:       todayTab,
+		showInfo:  true,
 		textInput: ti,
 		syncing:   true, // always try to sync on startup
 		cursor: cursorPosition{
@@ -364,14 +389,14 @@ func (m model) getCurrentTodo() (Todo, error) {
 func editTaskInEditor(todo Todo, path string) tea.Cmd {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
-		editor = "vim"
+		editor = "vim" // Always! 💪
 	}
 	c := exec.Command(editor, path)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		if err != nil {
 			return editorFinishedMsg{err}
 		}
-		todo, err := parseEditFile(path, todo)
+		todo, err = parseEditFile(path, todo)
 		if err != nil {
 			return editorFinishedMsg{err}
 		}
@@ -493,10 +518,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, editTaskInEditor(todo, path)
 		case key.Matches(msg, m.keys.NewWithEditor):
 			return m, newTaskInEditor(m)
-		case key.Matches(msg, m.keys.Down), key.Matches(msg, m.keys.Up):
+		case key.Matches(msg, m.keys.Down, m.keys.Up, m.keys.Bottom, m.keys.Top):
 			m.moveCursor(msg)
 		case key.Matches(msg, m.keys.AllTasksTab), key.Matches(msg, m.keys.CompletedTab), key.Matches(msg, m.keys.TodayTab), key.Matches(msg, m.keys.InboxTab):
 			m.changeTab(msg)
+			m.refreshCursor()
 		case key.Matches(msg, m.keys.Done):
 			todo, err := m.getCurrentTodo()
 			if err != nil {
@@ -506,6 +532,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.markAsDone(todo)
 		case key.Matches(msg, m.keys.Help):
 			m.showHelp = !m.showHelp
+			return m, nil
+		case key.Matches(msg, m.keys.Info):
+			m.showInfo = !m.showInfo
 			return m, nil
 		case key.Matches(msg, m.keys.Filter):
 			m.textInput.Focus()
@@ -542,7 +571,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	top := m.topBar()
-	content := m.getMainList()
+	mainList := m.getMainList()
+	content := m.renderViewList(mainList)
 	return m.debugView() + top + content + m.getEmptyLines(content+top) + m.bottomBar()
 }
 
@@ -558,28 +588,32 @@ func (m model) debugView() string {
 	return style.Render(content) + "\n"
 }
 
-func (m model) getMainList() string {
+func (m model) getMainList() []Todo {
 	switch m.tab {
 	case allTasksTab:
-		return m.listView(m.filteredTodos)
+		return m.filteredTodos
 	case todayTab:
-		return m.listView(m.todayTodos)
+		return m.todayTodos
 	case inboxTab:
-		return m.listView(m.inboxTodos)
-	// case completedTab:
-	// 	return m.listView(m.completedTodos)
+		return m.inboxTodos
+	case completedTab:
+		return m.completedTodos
 	default:
-		return "TODO"
+		return []Todo{}
 	}
 }
 
-func tabToString(p Tab) string {
+func (m model) tabToString(p Tab) string {
 	switch p {
 	case completedTab:
 		return "Completed tasks"
 	case allTasksTab:
 		return "All tasks"
 	case inboxTab:
+		inboxCount := len(m.inboxTodos)
+		if inboxCount > 0 {
+			return "Inbox " + chosenTextStyle.Render(fmt.Sprintf("(%d)", inboxCount))
+		}
 		return "Inbox"
 	case todayTab:
 		return "Today tasks"
@@ -595,9 +629,9 @@ func (m model) topBar() string {
 	s += "  "
 	for i := 0; i < totalTab; i++ {
 		if m.tab == i {
-			s += chosenTextStyle.Render(tabToString(i))
+			s += chosenTextStyle.Render(m.tabToString(i))
 		} else {
-			s += dimTextStyle.Render(tabToString(i))
+			s += dimTextStyle.Render(m.tabToString(i))
 		}
 
 		if i != (totalTab - 1) {
@@ -657,7 +691,7 @@ func (m model) bottomBar() string {
 	w, _ := lipgloss.Size(input)
 
 	style := lipgloss.NewStyle().
-		Width(m.totalWidth - w).
+		Width(m.totalWidth - w). // m.totalWidth might be 0
 		Foreground(lipgloss.Color("12")).
 		Align(lipgloss.Right)
 
@@ -673,45 +707,80 @@ func (m model) bottomBar() string {
 	return input + style.Render(s)
 }
 
-func (m model) listView(todos []Todo) string {
+func (m model) renderInfo(todo Todo, height int) string {
+	rows := [][]string{
+		{"title", todo.Content},
+		{"description", todo.Description},
+		{"project", todo.ProjectDisplay(m.totalWidth - 30)},
+		{"due", todo.DueDisplay(true)},
+		{"priority", displayPrioriy(todo.Priority)},
+		{"labels", strings.Join(todo.Labels, ", ")},
+	}
+	for _, child := range todo.Children {
+		rows = append(rows, []string{"child", child.Content})
+	}
+	t := table.New().
+		Border(lipgloss.NormalBorder()).
+		BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("8"))).
+		BorderRow(true).
+		Height(height).
+		Width(m.totalWidth).
+		Rows(rows...)
+	return t.Render()
+}
+
+func (m model) renderViewList(todos []Todo) string {
 	projectLength := projectNameSize(todos, 30)
 	content := ""
 	showing := 0
+	info := ""
+	infoHeight := 0
+	if m.showInfo {
+		infoHeight = 12
+	}
+	listHeight := m.listHeight - infoHeight - 1
 	for i, v := range todos {
 		if m.cursor.index == i {
 			content += "→ " + v.renderInList(m.totalWidth, projectLength)
+			if m.showInfo {
+				info = m.renderInfo(v, infoHeight) + "\n"
+			}
 		} else {
 			content += "  " + v.renderInList(m.totalWidth, projectLength)
 		}
 		content += "\n"
-		showing = i + 1
-		if i == m.listHeight {
+		showing++
+		if i >= listHeight {
 			break
 		}
 	}
 	content += fmt.Sprintf("\nshowing %d of %d", showing, len(todos))
+	if m.showInfo { // Add info to the right..
+		return content + "\n" + info
+	}
 	return content
 }
 
+// Add strikethrough if the task is completed/checked
 func (t Todo) renderInList(w int, projectNameLength int) string {
 	desc := defaultTextStyle.Render(withSize(t.Content, w-50))
 	labels := ""
 	for _, l := range t.Labels {
 		labels += labelsStyle.Render(" @" + l)
 	}
-	project := " "
-	if t.ProjectName != "" {
-		project = "#" + t.ProjectName
+	project := t.ProjectDisplay(projectNameLength)
+	due := t.DueDisplay(false)
+	rec := "  "
+	if t.Due.IsRecurring {
+		rec = "↻ "
 	}
-	project = projectStyle.Width(projectNameLength + 1).Render(project)
-	due := dueDateStyle.Width(10).Render(t.DueDisplay())
 	priority := displayPrioriy(t.Priority)
 	children := ""
 	totalChildren := len(t.Children)
 	if totalChildren > 0 {
 		children += dimTextStyle.Render(fmt.Sprintf(" (%d)", totalChildren))
 	}
-	return project + " " + due + " " + priority + " " + desc + " " + labels + children
+	return project + " " + rec + " " + due + " " + priority + " " + desc + " " + labels + children
 }
 
 /////////////
@@ -724,7 +793,7 @@ func (m model) getValidKeys(k keyMap) []key.Binding {
 		return []key.Binding{k.SetInput, k.ClearInput, k.ExitInput}
 	}
 	if m.showHelp {
-		return []key.Binding{k.Sync, k.New, k.NewWithEditor, k.Edit, k.Filter, k.Up, k.Down, k.AllTasksTab, k.CompletedTab, k.Help, k.Quit}
+		return []key.Binding{k.Sync, k.New, k.NewWithEditor, k.Edit, k.Done, k.Filter, k.Up, k.Down, k.Top, k.Bottom, k.AllTasksTab, k.CompletedTab, k.Help, k.Quit}
 	}
 	return []key.Binding{k.Help, k.Quit}
 }
@@ -756,25 +825,39 @@ func (m *model) changeTab(km tea.KeyMsg) {
 	}
 }
 
-func (m *model) moveCursor(km tea.KeyMsg) {
-	bottom := m.listHeight
-
-	// TODO: make this work for all pages
-	if len(m.filteredTodos) < bottom {
-		bottom = len(m.filteredTodos) - 1
+func (m *model) refreshCursor() {
+	maxIndex := len(m.getMainList()) - 1
+	if maxIndex < 0 { // No elements in list (doesnt matter then)
+		return
 	}
+	if m.cursor.index > maxIndex {
+		m.cursor.index = maxIndex
+	}
+}
+
+func (m *model) moveCursor(km tea.KeyMsg) {
+	maxIndex := len(m.getMainList()) - 1
+	if maxIndex <= 0 {
+		return
+	}
+
+	if m.cursor.index > maxIndex {
+		m.cursor.index = maxIndex
+		return
+	}
+
 	switch {
 	case key.Matches(km, m.keys.Up):
 		if m.cursor.index > 0 {
 			m.cursor.index--
 		}
+	case key.Matches(km, m.keys.Top):
+		m.cursor.index = 0
+	case key.Matches(km, m.keys.Bottom):
+		m.cursor.index = maxIndex
 	case key.Matches(km, m.keys.Down):
-		if !(m.cursor.index >= bottom) {
+		if !(m.cursor.index >= maxIndex) {
 			m.cursor.index++
-		}
-	default:
-		if m.cursor.index > bottom {
-			m.cursor.index = bottom
 		}
 	}
 }
@@ -833,7 +916,7 @@ func main() {
 	model := NewModel(storage, *debug)
 
 	p := tea.NewProgram(model)
-	if err := p.Start(); err != nil {
+	if _, err := p.Run(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}

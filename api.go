@@ -98,12 +98,22 @@ func (api API) newTask(ctx context.Context, todo Todo) error {
 // NOT usign the sync API
 //
 // Currently only sending content and description
+type EditRequest struct {
+	Content     string   `json:"content,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Due         string   `json:"due_date,omitempty"`
+	Labels      []string `json:"labels,omitempty"`
+	Priority    int      `json:"priority,omitempty"`
+}
+
 func (api API) editTask(ctx context.Context, todo Todo) error {
 	url := fmt.Sprintf("https://api.todoist.com/rest/v2/tasks/%s", todo.Id)
-	t := struct {
-		Content     string `json:"content"`
-		Description string `json:"description"`
-	}{Content: todo.Content, Description: todo.Description}
+	t := EditRequest{
+		Content:     todo.Content,
+		Description: todo.Description,
+		Due:         todo.Due.Date,
+		Labels:      todo.Labels,
+	}
 	body, err := json.Marshal(t)
 	if err != nil {
 		return err

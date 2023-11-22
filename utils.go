@@ -1,13 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"errors"
-	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
-	"time"
 )
 
 func Contains[T comparable](list []T, x T) bool {
@@ -23,7 +19,7 @@ func creatFileIfNotExist(path string) error {
 	_, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return ioutil.WriteFile(path, []byte(""), 0644)
+			return os.WriteFile(path, []byte(""), 0644)
 		}
 	}
 	return err
@@ -89,7 +85,7 @@ func filterContents(list []Todo, filter string) []Todo {
 func filterToday(list []Todo) []Todo {
 	var newList = make([]Todo, 0)
 	for _, t := range list {
-		if t.DueToday() {
+		if t.DueTodayOrBefore() {
 			newList = append(newList, t)
 		}
 	}
@@ -190,62 +186,6 @@ func toTodos(items []Item, projects []Project) []Todo {
 	}
 	// What do we do if we have children left over..?
 	return todos
-}
-
-// in markdown
-func createEditFile(todo Todo) (string, error) {
-	path := fmt.Sprintf("/tmp/%s.md", todo.Id)
-	var b bytes.Buffer
-	fmt.Fprintf(&b, "# %s", todo.Content)
-	fmt.Fprint(&b, "\n\n")
-	fmt.Fprintf(&b, "%s", todo.Description)
-	err := ioutil.WriteFile(path, b.Bytes(), 0644)
-	return path, err
-}
-
-func parseEditFile(path string, todo Todo) (Todo, error) {
-	b, err := ioutil.ReadFile(path)
-	if err != nil {
-		return todo, err
-	}
-	lines := strings.SplitN(string(b), "\n", 2)
-	todo.Content = strings.TrimPrefix(lines[0], "# ")
-	if len(todo.Content) < 2 {
-		return todo, fmt.Errorf("parse error: could not parse header")
-	}
-	if len(lines) == 2 {
-		todo.Description = strings.TrimSpace(lines[1])
-	}
-	return todo, nil
-}
-
-func createNewTaskFile() (string, error) {
-	path := fmt.Sprintf("/tmp/%d.md", time.Now().Unix())
-	var b bytes.Buffer
-	fmt.Fprintf(&b, "---")
-	fmt.Fprintf(&b, "labels: ")
-	fmt.Fprintf(&b, "project: Inbox")
-	fmt.Fprintf(&b, "---")
-	fmt.Fprintf(&b, "# ")
-	err := ioutil.WriteFile(path, b.Bytes(), 0644)
-	return path, err
-}
-
-// TODO
-func parseTaskFile(path string) (todo Todo, err error) {
-	b, err := ioutil.ReadFile(path)
-	if err != nil {
-		return todo, err
-	}
-	lines := strings.SplitN(string(b), "\n", 2)
-	todo.Content = strings.TrimPrefix(lines[0], "#")
-	if len(todo.Content) < 2 {
-		return todo, fmt.Errorf("parse error: could not parse header")
-	}
-	if len(lines) == 2 {
-		todo.Description = lines[1]
-	}
-	return todo, nil
 }
 
 func displayPrioriy(p int) string {
