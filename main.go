@@ -426,7 +426,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case LocalTodos:
 		m.todos = msg.data
 		filtered := filterContents(msg.data, m.currentFilter)
-		sort.Sort(ByPriority(filtered))
+		sort.Sort(ByDueThenPriority(filtered))
 		m.filteredTodos = filtered
 		m.todayTodos = filterToday(m.filteredTodos)
 		m.inboxTodos = filterInbox(m.filteredTodos)
@@ -435,7 +435,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FetchedTodos:
 		m.todos = msg.data
 		filtered := filterContents(msg.data, m.currentFilter)
-		sort.Sort(ByDue(filtered))
+		sort.Sort(ByDueThenPriority(filtered))
 		m.filteredTodos = filtered
 		m.todayTodos = filterToday(m.filteredTodos)
 		m.inboxTodos = filterInbox(m.filteredTodos)
@@ -466,7 +466,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textInput.SetValue("")
 				m.textInput.Prompt = ""
 				m.inputField.enabled = false
-				m.moveCursor(tea.KeyMsg{})
+				m.refreshCursor()
 				if m.inputField.command == inputFieldCommandNew {
 					m.inputField.command = ""
 					m.syncing = true
@@ -616,7 +616,17 @@ func (m model) tabToString(p Tab) string {
 		}
 		return "Inbox"
 	case todayTab:
-		return "Today tasks"
+    // TODO: need completed tasks (today) to display correctly here..
+		extra := ""
+		style := dimTextStyle
+		todayCount := len(m.todayTodos)
+		if todayCount != 0 {
+			extra = " " + fmt.Sprintf("(%d/%d)", 0, todayCount)
+		}
+		if m.tab == todayTab {
+			style = p3Style
+		}
+		return "Today tasks" + style.Render(extra)
 	}
 	return ""
 }
@@ -736,7 +746,7 @@ func (m model) renderViewList(todos []Todo) string {
 	info := ""
 	infoHeight := 0
 	if m.showInfo {
-		infoHeight = 12
+		infoHeight = 16
 	}
 	listHeight := m.listHeight - infoHeight - 1
 	for i, v := range todos {

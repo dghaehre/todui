@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -16,7 +16,7 @@ type API struct {
 }
 
 func NewAPI(tokenPath string) (API, error) {
-	t, err := ioutil.ReadFile(tokenPath)
+	t, err := os.ReadFile(tokenPath)
 	if err != nil {
 		return API{}, err
 	}
@@ -104,6 +104,7 @@ type EditRequest struct {
 	Due         string   `json:"due_date,omitempty"`
 	Labels      []string `json:"labels,omitempty"`
 	Priority    int      `json:"priority,omitempty"`
+	DueString   string   `json:"due_string,omitempty"`
 }
 
 func (api API) editTask(ctx context.Context, todo Todo) error {
@@ -113,6 +114,11 @@ func (api API) editTask(ctx context.Context, todo Todo) error {
 		Description: todo.Description,
 		Due:         todo.Due.Date,
 		Labels:      todo.Labels,
+		Priority:    todo.Priority,
+		DueString:   todo.Due.ChangeString,
+	}
+	if t.DueString != "" { // If change string is set, then we dont want to set due. To avoid conflicts
+		t.Due = ""
 	}
 	body, err := json.Marshal(t)
 	if err != nil {

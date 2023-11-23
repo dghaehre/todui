@@ -120,11 +120,12 @@ func (t Todo) ProjectDisplay(projectNameLength int) string {
 }
 
 type Due struct {
-	String      string `json:"string"`
-	Date        string `json:"date"`
-	Lang        string `json:"lang"`
-	IsRecurring bool   `json:"is_recurring"`
-	Timezone    string `json:"timezone,omitempty"`
+	ChangeString string // Used for editing a due date with natural language
+	String       string `json:"string"`
+	Date         string `json:"date"`
+	Lang         string `json:"lang"`
+	IsRecurring  bool   `json:"is_recurring"`
+	Timezone     string `json:"timezone,omitempty"`
 }
 
 type Item struct {

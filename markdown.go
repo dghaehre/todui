@@ -79,6 +79,13 @@ func parseEditFile(path string, todo Todo) (Todo, error) {
 		todo.Due.Date = v
 	}
 
+	switch v := metaData["due_string"].(type) {
+	case string:
+		if v != "" {
+			todo.Due.ChangeString = v
+		}
+	}
+
 	switch v := metaData["priority"].(type) {
 	case string:
 		todo.Priority = parsePriority(v)
@@ -108,6 +115,8 @@ func createEditFile(todo Todo) (string, error) {
 	fmt.Fprintf(&b, "---\n")
 	fmt.Fprintf(&b, "due: %s\n", todo.Due.Date)
 	fmt.Fprintf(&b, "priority: %s\n", renderPriority(todo.Priority))
+	fmt.Fprintf(&b, "# Use due_string to set a new date with normal language\n")
+	fmt.Fprintf(&b, "due_string:\n")
 	fmt.Fprintf(&b, "labels:\n")
 	for _, t := range todo.Labels {
 		fmt.Fprintf(&b, " - %s\n", t)
@@ -115,6 +124,12 @@ func createEditFile(todo Todo) (string, error) {
 	fmt.Fprintf(&b, "---\n\n")
 	fmt.Fprintf(&b, "# %s\n\n", todo.Content)
 	fmt.Fprintf(&b, "%s", todo.Description)
+	if len(todo.Children) > 0 {
+		fmt.Fprintf(&b, "\n\n")
+		for _, t := range todo.Children {
+			fmt.Fprintf(&b, "- [ ] %s\n", t.Content)
+		}
+	}
 	err := os.WriteFile(path, b.Bytes(), 0644)
 	return path, err
 }
