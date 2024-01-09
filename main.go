@@ -616,7 +616,7 @@ func (m model) tabToString(p Tab) string {
 		}
 		return "Inbox"
 	case todayTab:
-    // TODO: need completed tasks (today) to display correctly here..
+		// TODO: need completed tasks (today) to display correctly here..
 		extra := ""
 		style := dimTextStyle
 		todayCount := len(m.todayTodos)
@@ -726,15 +726,18 @@ func (m model) renderInfo(todo Todo, height int) string {
 		{"priority", displayPrioriy(todo.Priority)},
 		{"labels", strings.Join(todo.Labels, ", ")},
 	}
-	for _, child := range todo.Children {
-		rows = append(rows, []string{"child", child.Content})
+	if len(todo.Children) > 0 {
+		rows = append(rows, []string{"children", todo.Children[0].Content})
+		for _, child := range todo.Children[1:] {
+			rows = append(rows, []string{"", child.Content})
+		}
 	}
 	t := table.New().
 		Border(lipgloss.NormalBorder()).
 		BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("8"))).
 		BorderRow(true).
 		Height(height).
-		Width(m.totalWidth).
+		Width(m.totalWidth / 2).
 		Rows(rows...)
 	return t.Render()
 }
@@ -744,16 +747,12 @@ func (m model) renderViewList(todos []Todo) string {
 	content := ""
 	showing := 0
 	info := ""
-	infoHeight := 0
-	if m.showInfo {
-		infoHeight = 16
-	}
-	listHeight := m.listHeight - infoHeight - 1
+	listHeight := m.listHeight - 1
 	for i, v := range todos {
 		if m.cursor.index == i {
 			content += "→ " + v.renderInList(m.totalWidth, projectLength)
 			if m.showInfo {
-				info = m.renderInfo(v, infoHeight) + "\n"
+				info = m.renderInfo(v, m.totalHeight) + "\n"
 			}
 		} else {
 			content += "  " + v.renderInList(m.totalWidth, projectLength)
@@ -765,8 +764,16 @@ func (m model) renderViewList(todos []Todo) string {
 		}
 	}
 	content += fmt.Sprintf("\nshowing %d of %d", showing, len(todos))
-	if m.showInfo { // Add info to the right..
-		return content + "\n" + info
+	if m.showInfo {
+		content = lipgloss.NewStyle().
+			Width(m.totalWidth / 2).
+			Render(content)
+
+		info = lipgloss.NewStyle().
+			Width(m.totalWidth / 2).
+			Render(info)
+
+		return lipgloss.JoinHorizontal(lipgloss.Top, content, info)
 	}
 	return content
 }

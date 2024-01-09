@@ -150,41 +150,28 @@ func toTodo(item Item, projects []Project) Todo {
 	}
 }
 
-// tries to set item onto child, returns ok if succesfull
-func setChild(projects []Project, todo *Todo, item Item) bool {
-	if todo.Id == item.ParentId {
-		todo.Children = append(todo.Children, toTodo(item, projects))
-		return true
-	}
-	for i := 0; i < len(todo.Children); i++ {
-		if setChild(projects, &todo.Children[i], item) {
-			return true
-		}
-	}
-	return false
-}
-
+// TODO: Support children of children
+// This simple implementation only supports one level of children
+// All other children will be lost..
 func toTodos(items []Item, projects []Project) []Todo {
-	var todos = make([]Todo, 0, len(items))
-	var children = make(map[string]Item)
-	// Create all root nodes
+	todos := make([]Todo, 0)
+	children := make([]Item, 0)
+	// Create all root Todos
 	for _, item := range items {
 		if item.ParentId == "" {
 			todos = append(todos, toTodo(item, projects))
 		} else {
-			children[item.ProjectId] = item
+			children = append(children, item)
 		}
 	}
 
 	for _, c := range children {
 		for i := 0; i < len(todos); i++ {
-			ok := setChild(projects, &todos[i], c)
-			if ok {
-				delete(children, c.Id)
+			if todos[i].Id == c.ParentId {
+				todos[i].Children = append(todos[i].Children, toTodo(c, projects))
 			}
 		}
 	}
-	// What do we do if we have children left over..?
 	return todos
 }
 

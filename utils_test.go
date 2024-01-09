@@ -63,6 +63,37 @@ func TestToTodos(t *testing.T) {
 	require.Equal(t, 1, len(todos))
 }
 
+func TestToTodosWithChildren(t *testing.T) {
+	items := []Item{{
+		Id:          "1",
+		ProjectId:   "1",
+		Content:     "parent item",
+		Description: "",
+		ParentId:    "",
+	}, {
+		Id:          "2",
+		ProjectId:   "1",
+		Content:     "first child",
+		Description: "",
+		ParentId:    "1",
+	}, {
+		Id:          "3",
+		ProjectId:   "1",
+		Content:     "second child",
+		Description: "",
+		ParentId:    "1",
+	}}
+
+	projects := []Project{{
+		Id:   "1",
+		Name: "Inbox",
+	}}
+
+	todos := toTodos(items, projects)
+	require.Equal(t, 1, len(todos))
+	require.Equal(t, 2, len(todos[0].Children))
+}
+
 // TODO
 func TestParseTaskFile(t *testing.T) {
 	// Testing empty task
