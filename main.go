@@ -555,6 +555,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, m.keys.Sync):
 			m.syncing = true
+			m.syncError = nil
 			return m, m.fetchTodos
 		case key.Matches(msg, m.keys.Help):
 			return m, tea.Quit
@@ -747,15 +748,19 @@ func (m model) renderViewList(todos []Todo) string {
 	content := ""
 	showing := 0
 	info := ""
+	width := m.totalWidth
+	if m.showInfo {
+		width = (m.totalWidth / 2)
+	}
 	listHeight := m.listHeight - 1
 	for i, v := range todos {
 		if m.cursor.index == i {
-			content += "→ " + v.renderInList(m.totalWidth, projectLength)
+			content += "→ " + v.renderInList(width, projectLength)
 			if m.showInfo {
 				info = m.renderInfo(v, m.totalHeight) + "\n"
 			}
 		} else {
-			content += "  " + v.renderInList(m.totalWidth, projectLength)
+			content += "  " + v.renderInList(width, projectLength)
 		}
 		content += "\n"
 		showing++
@@ -797,7 +802,12 @@ func (t Todo) renderInList(w int, projectNameLength int) string {
 	if totalChildren > 0 {
 		children += dimTextStyle.Render(fmt.Sprintf(" (%d)", totalChildren))
 	}
-	return project + " " + rec + " " + due + " " + priority + " " + desc + " " + labels + children
+	result := project + " " + rec + " " + due + " " + priority + " " + desc + " " + labels + children
+	if lipgloss.Width(result) > w {
+		// Dont show labels if it doesnt fit
+		return project + " " + rec + " " + due + " " + priority + " " + desc + " " + children
+	}
+	return result
 }
 
 /////////////

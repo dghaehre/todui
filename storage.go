@@ -22,7 +22,7 @@ type SyncResponse struct {
 }
 
 func newContext() (context.Context, func()) {
-	return context.WithTimeout(context.Background(), time.Second*5)
+	return context.WithTimeout(context.Background(), time.Second*8)
 }
 
 // NOTE: kinda ugly now, but works ish.
