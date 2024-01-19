@@ -134,11 +134,13 @@ func TestEditAndParseTaskFile(t *testing.T) {
 		ProjectId:   "456",
 		Content:     "A test todo",
 		Description: "from a test",
+		Labels:      []string{},
+		Children:    []Todo{},
 	}
 
 	path, err := createEditFile(todo)
 	require.NoError(t, err)
-	newTodo, err := parseEditFile(path, todo)
+	newTodo, _, err := parseEditFile(path, todo)
 	require.NoError(t, err)
 	require.EqualValues(t, todo, newTodo)
 

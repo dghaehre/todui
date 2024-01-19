@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 type API struct {
@@ -24,6 +26,10 @@ func NewAPI(tokenPath string) (API, error) {
 	return API{
 		token: strings.TrimSpace(fmt.Sprintf("%s", t)),
 	}, nil
+}
+
+type QuickAddResponse struct {
+	Id string `json:"id"`
 }
 
 func (api API) getPending(ctx context.Context, token string) (SyncResponse, error) {
@@ -49,7 +55,8 @@ func (api API) getPending(ctx context.Context, token string) (SyncResponse, erro
 	return syncResponse, err
 }
 
-func (api API) quickAdd(ctx context.Context, content string) error {
+// returns the id of the new todo
+func (api API) quickAdd(ctx context.Context, content string) (string, error) {
 	values := url.Values{
 		"text": {content},
 	}
@@ -57,18 +64,24 @@ func (api API) quickAdd(ctx context.Context, content string) error {
 	body := strings.NewReader(s)
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.todoist.com/sync/v9/quick/add", body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Add("Authorization", "Bearer "+api.token)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
+	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		return fmt.Errorf("quickadd returned %d status code", res.StatusCode)
+		return "", fmt.Errorf("quickadd returned %d status code", res.StatusCode)
 	}
-	return nil
+	var quickAddResponse QuickAddResponse
+	err = json.NewDecoder(res.Body).Decode(&quickAddResponse)
+	if err != nil {
+		return "", err
+	}
+	return quickAddResponse.Id, nil
 }
 
 func (api API) markAsDone(ctx context.Context, todo Todo) error {
@@ -94,6 +107,43 @@ func (api API) newTask(ctx context.Context, todo Todo) error {
 	return fmt.Errorf("new task: not implemented yet")
 }
 
+func (api API) makeChild(ctx context.Context, parentId, childId string) error {
+	v := fmt.Sprintf(`[
+    {
+        "type": "item_move",
+        "uuid": "%s",
+        "args": {
+            "id": "%s", 
+            "parent_id": "%s"
+        }
+    }]`, uuid.New().String(), childId, parentId)
+	values := url.Values{
+		"commands": {v},
+	}
+	s := values.Encode()
+	body := strings.NewReader(s)
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.todoist.com/sync/v9/sync", body)
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Authorization", "Bearer "+api.token)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	_, err = http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// NOTE: if makechild fails we are in a wierd state...
+func (api API) newChild(ctx context.Context, parentId string, content string) error {
+	id, err := api.quickAdd(ctx, content)
+	if err != nil {
+		return err
+	}
+	return api.makeChild(ctx, parentId, id)
+}
+
 // TODO: use sync api
 // NOT usign the sync API
 //
@@ -107,6 +157,7 @@ type EditRequest struct {
 	DueString   string   `json:"due_string,omitempty"`
 }
 
+// TODO: somehow support editing of children
 func (api API) editTask(ctx context.Context, todo Todo) error {
 	url := fmt.Sprintf("https://api.todoist.com/rest/v2/tasks/%s", todo.Id)
 	t := EditRequest{

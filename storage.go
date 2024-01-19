@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -70,12 +71,27 @@ func (s Storage) newTask(todo Todo) ([]Todo, error) {
 	return s.fetchTodos()
 }
 
-func (s Storage) editTask(todo Todo) ([]Todo, error) {
+func (s Storage) editTask(data EditTaskData) ([]Todo, error) {
 	ctx, cancel := newContext()
 	defer cancel()
-	err := s.api.editTask(ctx, todo)
+	err := s.api.editTask(ctx, data.todo)
 	if err != nil {
 		return nil, err
+	}
+	// NOTE: could possibly do this in parallel.
+	for _, child := range data.updateChildren {
+		switch child.UpdateStatus {
+		case UpdateStatusModified:
+			err = s.api.editTask(ctx, child.Org)
+			if child.Checked {
+				err = s.api.markAsDone(ctx, child.Org)
+			}
+		case UpdateStatusDeleted:
+			// err = s.api.deleteTask(ctx, child.Org)
+			return nil, fmt.Errorf("delete is not implemented")
+		case UpdateStatusNew:
+			err = s.api.newChild(ctx, data.todo.Id, child.Content)
+		}
 	}
 	return s.fetchTodos()
 }
@@ -83,7 +99,7 @@ func (s Storage) editTask(todo Todo) ([]Todo, error) {
 func (s Storage) quickAdd(content string) ([]Todo, error) {
 	ctx, cancel := newContext()
 	defer cancel()
-	err := s.api.quickAdd(ctx, content)
+	_, err := s.api.quickAdd(ctx, content)
 	if err != nil {
 		return nil, err
 	}

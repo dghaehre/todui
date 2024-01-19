@@ -325,9 +325,9 @@ func (m model) newTask(todo Todo) func() tea.Msg {
 	}
 }
 
-func (m model) editTask(todo Todo) func() tea.Msg {
+func (m model) editTask(data EditTaskData) func() tea.Msg {
 	return func() tea.Msg {
-		todos, err := m.storage.editTask(todo)
+		todos, err := m.storage.editTask(data)
 		if err != nil {
 			return SyncError{ // TODO: new error
 				err: err,
@@ -396,12 +396,15 @@ func editTaskInEditor(todo Todo, path string) tea.Cmd {
 		if err != nil {
 			return editorFinishedMsg{err}
 		}
-		todo, err = parseEditFile(path, todo)
+		todo, updateChildren, err := parseEditFile(path, todo)
 		if err != nil {
 			return editorFinishedMsg{err}
 		}
 		return EditTask{
-			data: todo,
+			data: EditTaskData{
+				todo:           todo,
+				updateChildren: updateChildren,
+			},
 		}
 	})
 }

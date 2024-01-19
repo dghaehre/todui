@@ -17,8 +17,29 @@ type NewTask struct {
 	data Todo
 }
 
+type UpdateStatus int
+
+const (
+	UpdateStatusModified UpdateStatus = iota
+	UpdateStatusDeleted
+	UpdateStatusNew
+)
+
+type UpdateChild struct {
+	Org     Todo
+	Checked bool
+	Content string
+	UpdateStatus
+}
+
+type EditTaskData struct {
+	todo           Todo
+	updateChildren []UpdateChild
+}
+
+// TODO: add children as well somewhow
 type EditTask struct {
-	data Todo
+	data EditTaskData
 }
 
 // ^
